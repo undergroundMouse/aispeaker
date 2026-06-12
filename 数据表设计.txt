@@ -1,0 +1,191 @@
+自定义物体向量库（LanceDB）
+用途：存储用户教授的个性化物体特征及标签，支持快速近邻检索。
+存储引擎：LanceDB (wasm) – 向量数据库。
+
+字段	类型	说明
+id	string	唯一标识（UUID）
+label	string	用户给定的名称，如“我的咖啡杯”
+embedding	float[256]	物体 ROI 的 256 维特征向量（PP-LCNet）
+thumbnail	string	物体缩略图 Base64（可选，用于管理界面）
+created_at	string	教学时间，ISO8601
+last_matched_at	string	最近一次识别命中时间
+match_count	int	命中次数，用于热度排序
+索引：向量列建立 IVFPQ 索引，余弦相似度度量。
+JSON 示例（逻辑表示）：
+
+json
+{
+  "id": "obj-001",
+  "label": "我的咖啡杯",
+  "embedding": [0.12, -0.34, ..., 0.56],
+  "created_at": "2026-06-12T08:15:00Z",
+  "last_matched_at": "2026-06-12T09:20:00Z",
+  "match_count": 5
+}
+2.2 长期记忆库（IndexedDB）
+用途：存储跨会话的用户偏好、习惯、对象位置等结构化记忆，支持语义搜索与强度演化。
+
+字段	类型	说明
+id	string	记忆 ID（UUID）
+type	string	记忆类型：preference, location, habit, fact
+content	string	记忆内容自然语言描述，如“用户喜欢红色”
+embedding	float[256]	content 的语义向量（text2vec-base-chinese）
+strength	float	强度（0~1），每次关联使用+0.1，30天无访问衰减至0
+source	string	来源：user_statement, system_observed, inferred
+created_at	string	创建时间
+last_accessed_at	string	最近一次被检索使用的时间
+tags	array[string]	标签，如 ["颜色","咖啡杯"]
+metadata	object	扩展元数据，如 {"object_id": "obj-001"} 关联物体
+索引：type, strength, last_accessed_at；通过 embedding 进行余弦相似度搜索。
+JSON 示例：
+
+json
+{
+  "id": "mem-042",
+  "type": "preference",
+  "content": "用户喜欢红色的咖啡杯",
+  "embedding": [0.05, 0.22, ..., -0.11],
+  "strength": 0.85,
+  "source": "user_statement",
+  "created_at": "2026-06-10T14:00:00Z",
+  "last_accessed_at": "2026-06-12T09:20:00Z",
+  "tags": ["颜色", "咖啡杯"],
+  "metadata": { "object_id": "obj-001" }
+}
+2.3 用户设置与状态表（IndexedDB）
+用途：存储用户偏好设置、功能开关、节能模式等。
+
+字段	类型	说明
+key	string	主键，如 proactive_mode, voice, daily_limit
+value	any	对应的值
+updated_at	string	最近修改时间
+示例记录：
+
+json
+{ "key": "proactive_mode", "value": "balanced", "updated_at": "..." }
+{ "key": "proactive_daily_limit", "value": 10, "updated_at": "..." }
+{ "key": "voice", "value": "zh_female_ningning", "updated_at": "..." }
+{ "key": "energy_saving", "value": true, "updated_at": "..." }
+2.4 对话历史缓存表（IndexedDB，临时）
+用途：仅保存最近 20 轮对话，用于上下文组装，超过即删。
+
+字段	类型	说明
+id	string	自增或 UUID
+session_id	string	所属会话
+role	string	user 或 assistant
+content	string	对话文本
+timestamp	string	消息时间
+image_base64	string?	若用户消息附带关键帧，可暂存（临时，处理完清除）
+JSON 示例：
+
+json
+{
+  "id": "msg-101",
+  "session_id": "sess_abc123",
+  "role": "user",
+  "content": "这是什么？",
+  "timestamp": "2026-06-12T09:18:00Z"
+}
+2.5 主动提示历史表（IndexedDB）
+用途：记录已触发的主动提示，避免重复打扰。
+
+字段	类型	说明
+event_type	string	事件类型，如 object_left_behind, danger_pose
+object_id	string?	关联物体 ID（如有）
+message	string	播报的提示文本
+triggered_at	string	触发时间
+expires_at	string	冷却结束时间（同一事件30分钟内不再触发）
+索引：event_type + object_id，用于快速查找。
+JSON 示例：
+
+json
+{
+  "event_type": "object_left_behind",
+  "object_id": "obj-001",
+  "message": "你的咖啡杯似乎落在桌上了。",
+  "triggered_at": "2026-06-12T09:30:00Z",
+  "expires_at": "2026-06-12T10:00:00Z"
+}
+3. 云端数据表（服务器数据库）
+3.1 用户账户表（可选，用于多设备同步）
+用途：如果提供账户体系，存储用户基础信息。
+
+字段	类型	说明
+user_id	string (PK)	用户唯一 ID
+email	string?	邮箱（可选）
+hashed_password	string?	密码哈希（可选）
+created_at	string	注册时间
+settings	object	云端同步的设置副本，如语音、预算上限
+3.2 会话表
+用途：记录每次 /session/start 创建的会话，用于鉴权与用量关联。
+
+字段	类型	说明
+session_id	string (PK)	会话 ID
+user_id	string?	关联用户（如有账户）
+device_id	string	设备指纹
+token_hash	string	JWT 的哈希值（不存原始 token）
+created_at	string	会话开始时间
+expires_at	string	会话过期时间（通常 2 小时）
+features	array	启用的功能 ["vision","asr","tts","proactive","memory"]
+daily_cost_limit	float	此会话的每日成本上限
+3.3 云端调用日志表（成本基础数据）
+用途：记录每一次云端 API 调用的脱敏信息，用于成本统计与限额控制。
+
+字段	类型	说明
+log_id	string (PK)	日志 ID
+session_id	string	所属会话
+api_endpoint	string	调用的接口：/vision/chat, /asr/stream, /tts/speech
+tokens_used	int	消耗 token 数（ASR 按分钟折算，TTS 按字符折算）
+cost	float	本次调用成本（人民币）
+http_status	int	响应状态码
+requested_at	string	请求时间
+latency_ms	int	响应延迟（毫秒）
+索引：session_id, requested_at（按天聚合）。
+聚合视图：通过定时任务汇总到每日用量表。
+
+3.4 每日用量汇总表
+用途：按用户/会话/天聚合成本，用于快速查询和限额判断。
+
+字段	类型	说明
+date	string	日期，如 "2026-06-12"
+session_id	string	会话 ID
+user_id	string?	用户 ID
+total_tokens	int	当日总 token
+total_cost	float	当日总成本
+api_calls	int	当日总调用次数
+查询：GET /cost/status 时实时计算当前 session_id 今日总和。
+
+3.5 记忆备份元数据表
+用途：管理用户自愿上传的加密记忆备份，不存储明文。
+
+字段	类型	说明
+backup_id	string (PK)	备份 ID
+user_id	string?	用户 ID（如有）
+session_id	string	上传时的会话
+encrypted_payload	text	加密后的记忆数据（Base64）
+iv	string	加密 IV（Base64）
+version	int	备份格式版本
+size_bytes	int	加密数据大小
+created_at	string	备份时间
+权限：仅当请求包含正确 X-Encryption-Key-ID 且密钥匹配时，允许恢复。云端无法解密。
+
+3.6 运营统计表（Dashboard 用）
+用途：全局运营指标，非用户级。
+
+字段	类型	说明
+stat_date	string (PK)	日期
+active_users	int	活跃设备数
+total_api_calls	int	全局调用量
+total_cost	float	全局成本
+avg_latency_ms	float	平均延迟
+error_rate	float	错误率
+4. 数据生命周期与隐私保障
+端侧数据：用户可一键清除所有 IndexedDB/LanceDB 数据；定期清理超过 30 天未访问且强度低于 0.1 的记忆。
+
+对话缓存：会话结束或超过 20 轮后，最早记录自动清除。
+
+云端日志：不保存任何视频帧、音频、原始文本；调用日志仅保留 token 数、成本等数值，保留 90 天后归档删除。
+
+记忆备份：完全由用户控制上传/删除，服务端无法查看内容。
+
+此数据表设计与接口文档、模块设计完全对齐，支撑全部用户故事所需的持久化需求。

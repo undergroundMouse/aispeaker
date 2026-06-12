@@ -1,0 +1,253 @@
+基础信息
+Base URL: https://api.smartvision.example.com/v1
+
+鉴权方式: 请求头携带 Authorization: Bearer <JWT_TOKEN>（通过 /session/start 获取）
+
+内容类型: 除文件上传外均为 application/json
+
+1. 会话管理
+1.1 创建会话
+http
+POST /session/start
+功能: 初始化会话，返回访问令牌和配置参数。
+
+请求体:
+
+json
+{
+  "device_id": "browser-fingerprint-uuid",
+  "features": ["vision", "asr", "tts", "proactive", "memory"]
+}
+成功响应 (200):
+
+json
+{
+  "session_id": "sess_abc123",
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "expires_in": 7200,
+  "config": {
+    "asr_provider": "ali_paraformer",
+    "vision_model": "qwen-vl-max",
+    "tts_provider": "ali_cosyvoice",
+    "daily_cost_limit": 0.2,
+    "proactive_mode": "balanced"
+  }
+}
+错误响应:
+
+429 Too Many Requests – 设备创建会话过于频繁
+
+2. 语音识别（ASR）
+2.1 流式语音识别
+http
+WebSocket wss://api.smartvision.example.com/v1/asr/stream
+功能: 实时上传音频流，接收转写文本。需在连接时附加 ?token=<JWT>。
+
+发送帧（Binary）:
+
+PCM 16kHz, 单声道, 16bit 音频片段（每帧 40ms 数据）
+
+接收消息（JSON 文本帧）:
+
+json
+{
+  "text": "这是什么",
+  "is_final": true,
+  "confidence": 0.98,
+  "begin_time": 0,
+  "end_time": 1.2
+}
+is_final=false 时文本为中间结果，可被覆盖。
+
+最终结果 is_final=true 时调用方应作为最终用户输入。
+
+错误帧:
+
+json
+{
+  "error": "recognition_failed",
+  "message": "音频质量过低或包含无法识别的内容"
+}
+3. 多模态视觉理解
+3.1 视觉对话
+http
+POST /vision/chat
+功能: 发送关键帧与文本上下文，获取视觉问答结果、区域坐标及记忆更新建议。
+
+请求体:
+
+json
+{
+  "session_id": "sess_abc123",
+  "image": "base64_encoded_jpeg_string",
+  "prompt": "我面前的是什么？",
+  "context": {
+    "history": [
+      {"role": "user", "content": "记住，这是我的咖啡杯"},
+      {"role": "assistant", "content": "已记住，这是你的咖啡杯"}
+    ],
+    "local_objects": ["杯子 (0.45,0.30,0.10,0.15)"],
+    "memory_hints": ["用户偏好红色的杯子", "咖啡杯常放在厨房"]
+  }
+}
+image: 分辨率已降为 224x224 的 JPEG 图像，Base64 编码（不带前缀）。
+
+context.history: 最近的对话历史（最多6轮）。
+
+context.local_objects: 端侧检测到的物体及归一化坐标（xywh）。
+
+context.memory_hints: 从长期记忆库检索到的相关记忆摘要。
+
+成功响应 (200):
+
+json
+{
+  "answer": "这是你的咖啡杯，一个红色的陶瓷杯子。",
+  "regions": [
+    {
+      "box": [0.42, 0.28, 0.12, 0.18],
+      "label": "咖啡杯",
+      "explanation": "红色陶瓷材质，圆柱形，有把手"
+    }
+  ],
+  "memory_suggestions": [
+    {
+      "action": "update",
+      "type": "object_location",
+      "content": "咖啡杯出现在厨房台面上",
+      "confidence": 0.95
+    }
+  ],
+  "proactive_triggers": []
+}
+regions: 可为空数组（模型不确定时）。
+
+memory_suggestions: 建议端侧更新的记忆条目，端侧根据用户确认执行。
+
+proactive_triggers: 云端判断的主动提示（极少使用），结构同主动提示事件。
+
+错误响应:
+
+400 Bad Request – 图片格式错误或过大
+
+422 Unprocessable Entity – 模型无法理解输入，返回 { "answer": "抱歉，我没看清，能再说一遍吗？" }
+
+429 Too Many Requests – 超出每日调用限额
+
+4. 语音合成（TTS）
+4.1 文本转语音
+http
+POST /tts/speech
+功能: 将文本转为语音流，支持流式传输。
+
+请求体:
+
+json
+{
+  "text": "这是你的咖啡杯，一个红色的陶瓷杯子。",
+  "voice": "zh_female_ningning",
+  "speed": 1.0,
+  "response_format": "mp3"
+}
+voice: 音色标识，可选值见 TTS 提供商文档。
+
+speed: 语速倍率，0.5~2.0。
+
+response_format: 默认 mp3，也可选 opus。
+
+成功响应 (200):
+
+Content-Type: audio/mpeg
+
+响应体为二进制音频流，可直接播放。
+
+错误响应:
+
+400 Bad Request – 文本超长（>500字符）或音色无效
+
+503 Service Unavailable – TTS 服务暂时不可用
+
+5. 长期记忆云端备份（可选，需用户授权）
+5.1 备份记忆
+http
+POST /memory/backup
+功能: 将用户同意上传的加密记忆数据存储到云端。
+
+请求头:
+
+X-Encryption-Key-ID: 加密密钥标识，由端侧生成。
+
+请求体:
+
+json
+{
+  "encrypted_payload": "base64_encoded_aes_gcm_encrypted_data",
+  "iv": "base64_iv",
+  "version": 1
+}
+成功响应 (200):
+
+json
+{
+  "status": "success",
+  "backup_id": "back_xyz789",
+  "timestamp": "2026-06-12T08:30:00Z"
+}
+5.2 恢复记忆
+http
+GET /memory/backup/{backup_id}
+功能: 获取备份的加密记忆数据，由端侧自行解密。
+
+成功响应 (200):
+
+json
+{
+  "encrypted_payload": "base64_encrypted_data",
+  "iv": "base64_iv",
+  "created_at": "2026-06-12T08:30:00Z"
+}
+注意: 云端不存储解密密钥，无法读取内容。
+
+6. 成本与用量查询
+6.1 查询当前用量
+http
+GET /cost/status
+功能: 返回当前会话的累计成本及限额。
+
+成功响应 (200):
+
+json
+{
+  "session_id": "sess_abc123",
+  "daily_tokens_used": 4500,
+  "daily_cost": 0.09,
+  "daily_limit": 0.20,
+  "remaining_cost": 0.11,
+  "breakdown": {
+    "asr": 0.02,
+    "vision": 0.06,
+    "tts": 0.01
+  }
+}
+7. 通用错误码
+状态码	含义	说明
+401	Unauthorized	Token 无效或过期
+403	Forbidden	未开启对应功能权限
+429	Too Many Requests	超出频率限制或每日预算
+500	Internal Server Error	云端服务异常，可重试
+503	Service Unavailable	依赖的模型服务临时不可用
+所有错误响应体均包含：
+
+json
+{
+  "error": "error_code",
+  "message": "人类可读的错误描述"
+}
+8. 接口调用约定
+图片编码：JPEG 质量 60%，强制转换为 224x224 后 Base64，减少传输量。
+
+时间戳：均为 UTC ISO8601 格式。
+
+坐标：归一化 [x_center, y_center, width, height]，范围 0~1。
+
+主动提示触发：由端侧本地规则引擎主导，云端 /vision/chat 返回的 proactive_triggers 仅在极罕见场景下提供，每日调用 ≤3 次，且必须满足全局频率限制。

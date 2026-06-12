@@ -2,9 +2,86 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
   background: #0f1117;
   color: #e8eaed;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #2a2d35;
+  background: #161922;
+}
+
+.toolbar__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.toolbar__btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: #4f7cff;
+  color: #fff;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.toolbar__btn:hover {
+  background: #3d68e8;
+}
+
+.app__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1.5rem;
+}
+
+.camera-preview {
+  width: min(640px, 100%);
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #1a1d26;
+  border: 1px solid #2a2d35;
+}
+
+.camera-preview__video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.camera-preview--loading,
+.camera-preview--error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.camera-preview--error p {
+  margin: 0;
+  color: #f28b82;
+  line-height: 1.5;
+}
+
+.camera-preview--error button {
+  padding: 0.5rem 1.25rem;
+  border: none;
+  border-radius: 8px;
+  background: #4f7cff;
+  color: #fff;
+  cursor: pointer;
 }

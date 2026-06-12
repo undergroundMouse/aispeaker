@@ -48,4 +48,23 @@ export const VOICE_EVENTS = {
   TURN_SUBMITTED: 'voice:turn:submitted',
 } as const
 
+export const LOCAL_COMMAND_EVENTS = {
+  EXECUTED: 'voice:local-command:executed',
+} as const
+
+export type LocalCommandAction =
+  | 'greet'
+  | 'goodbye'
+  | 'stop-dialogue'
+  | 'take-photo'
+  | 'switch-language'
+
+export interface LocalCommandResult {
+  action: LocalCommandAction
+  phrase: string
+  message: string
+  handledLocally: true
+  targetLanguage?: 'zh' | 'en'
+}
+
 export const DEFAULT_WAKE_PHRASE = '你好小助手'

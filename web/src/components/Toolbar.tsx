@@ -3,7 +3,9 @@ import { appCore } from '../core/bootstrap'
 import { eventBus } from '../core/event-bus'
 import { MEDIA_EVENTS, type ConversationState, type StreamState } from '../core/media/types'
 import {
+  LOCAL_COMMAND_EVENTS,
   VOICE_EVENTS,
+  type LocalCommandResult,
   type VoiceInputState,
   type VoiceTranscript,
 } from '../core/voice/types'
@@ -19,6 +21,7 @@ export function Toolbar() {
     appCore.voiceInputManager.getState(),
   )
   const [lastTranscript, setLastTranscript] = useState('')
+  const [localCommandMessage, setLocalCommandMessage] = useState('')
   const [frameCount, setFrameCount] = useState(0)
 
   useEffect(() => {
@@ -31,11 +34,16 @@ export function Toolbar() {
       VOICE_EVENTS.TRANSCRIPT_FINAL,
       (payload) => setLastTranscript(payload.text),
     )
+    const unsubLocalCommand = eventBus.on<LocalCommandResult>(
+      LOCAL_COMMAND_EVENTS.EXECUTED,
+      (payload) => setLocalCommandMessage(payload.message),
+    )
     return () => {
       unsubStream()
       unsubFrames()
       unsubVoice()
       unsubTranscript()
+      unsubLocalCommand()
     }
   }, [])
 
@@ -138,6 +146,9 @@ export function Toolbar() {
         <span className="toolbar__stats">语音: {voiceStatusLabel}</span>
         {lastTranscript && (
           <span className="toolbar__stats toolbar__stats--transcript">最近: {lastTranscript}</span>
+        )}
+        {localCommandMessage && (
+          <span className="toolbar__stats toolbar__stats--local">本地: {localCommandMessage}</span>
         )}
         <span className="toolbar__stats">已采集帧: {frameCount}</span>
       </div>

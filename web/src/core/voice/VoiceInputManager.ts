@@ -267,7 +267,6 @@ export class VoiceInputManager {
 
     eventBus.emit(VOICE_EVENTS.TRANSCRIPT_FINAL, transcript)
     eventBus.emit(VOICE_EVENTS.TURN_SUBMITTED, turn)
-    this.conversationManager.setState('thinking')
 
     this.setState({
       status: this.state.wakeEnabled ? 'wake-listening' : 'ready',

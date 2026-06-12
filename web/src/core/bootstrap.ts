@@ -4,6 +4,7 @@ import { LocalInferenceEngine } from './inference/LocalInferenceEngine'
 import { FrameSampler } from './media/FrameSampler'
 import { MediaStreamManager } from './media/MediaStreamManager'
 import { MEDIA_EVENTS, type StreamState } from './media/types'
+import { LocalCommandRouter } from './voice/LocalCommandRouter'
 import { VoiceInputManager } from './voice/VoiceInputManager'
 import { eventBus } from './event-bus'
 
@@ -13,13 +14,18 @@ class AppCore {
   readonly conversationManager = new ConversationManager()
   readonly voiceInputManager = new VoiceInputManager(this.conversationManager)
   readonly localInferenceEngine = new LocalInferenceEngine()
-  readonly cloudGateway = new CloudGateway()
+  readonly cloudGateway = new CloudGateway(this.conversationManager)
+  readonly localCommandRouter = new LocalCommandRouter(
+    this.conversationManager,
+    this.cloudGateway,
+  )
 
   private streamUnsubscribe?: () => void
 
   init(): void {
     this.localInferenceEngine.start()
     this.cloudGateway.start()
+    this.localCommandRouter.start()
 
     this.streamUnsubscribe = eventBus.on<StreamState>(
       MEDIA_EVENTS.STREAM_STATE,
@@ -38,6 +44,7 @@ class AppCore {
     this.frameSampler.stop()
     this.mediaStreamManager.stop()
     this.voiceInputManager.destroy()
+    this.localCommandRouter.stop()
     this.localInferenceEngine.stop()
     this.cloudGateway.stop()
   }

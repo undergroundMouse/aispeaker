@@ -4,6 +4,7 @@ import { LocalInferenceEngine } from './inference/LocalInferenceEngine'
 import { FrameSampler } from './media/FrameSampler'
 import { MediaStreamManager } from './media/MediaStreamManager'
 import { MEDIA_EVENTS, type StreamState } from './media/types'
+import { NetworkMonitor } from './network/NetworkMonitor'
 import { LocalCommandRouter } from './voice/LocalCommandRouter'
 import { VoiceInputManager } from './voice/VoiceInputManager'
 import { eventBus } from './event-bus'
@@ -14,7 +15,8 @@ class AppCore {
   readonly conversationManager = new ConversationManager()
   readonly voiceInputManager = new VoiceInputManager(this.conversationManager)
   readonly localInferenceEngine = new LocalInferenceEngine()
-  readonly cloudGateway = new CloudGateway(this.conversationManager)
+  readonly networkMonitor = new NetworkMonitor()
+  readonly cloudGateway = new CloudGateway(this.conversationManager, this.networkMonitor)
   readonly localCommandRouter = new LocalCommandRouter(
     this.conversationManager,
     this.cloudGateway,
@@ -24,6 +26,7 @@ class AppCore {
 
   init(): void {
     this.localInferenceEngine.start()
+    this.networkMonitor.start()
     this.cloudGateway.start()
     this.localCommandRouter.start()
 
@@ -47,6 +50,7 @@ class AppCore {
     this.localCommandRouter.stop()
     this.localInferenceEngine.stop()
     this.cloudGateway.stop()
+    this.networkMonitor.stop()
   }
 }
 

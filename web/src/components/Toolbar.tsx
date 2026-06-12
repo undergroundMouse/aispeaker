@@ -3,6 +3,11 @@ import { appCore } from '../core/bootstrap'
 import { eventBus } from '../core/event-bus'
 import { MEDIA_EVENTS, type ConversationState, type StreamState } from '../core/media/types'
 import {
+  NETWORK_EVENTS,
+  type NetworkRetryPrompt,
+  type NetworkStatePayload,
+} from '../core/network/types'
+import {
   LOCAL_COMMAND_EVENTS,
   VOICE_EVENTS,
   type LocalCommandResult,
@@ -22,6 +27,8 @@ export function Toolbar() {
   )
   const [lastTranscript, setLastTranscript] = useState('')
   const [localCommandMessage, setLocalCommandMessage] = useState('')
+  const [networkState, setNetworkState] = useState(appCore.networkMonitor.getState())
+  const [retryMessage, setRetryMessage] = useState('')
   const [frameCount, setFrameCount] = useState(0)
 
   useEffect(() => {
@@ -38,12 +45,20 @@ export function Toolbar() {
       LOCAL_COMMAND_EVENTS.EXECUTED,
       (payload) => setLocalCommandMessage(payload.message),
     )
+    const unsubNetwork = eventBus.on<NetworkStatePayload>(NETWORK_EVENTS.STATE, (payload) => {
+      setNetworkState(payload.state)
+    })
+    const unsubRetry = eventBus.on<NetworkRetryPrompt>(NETWORK_EVENTS.RETRY_PROMPT, (payload) => {
+      setRetryMessage(payload.message)
+    })
     return () => {
       unsubStream()
       unsubFrames()
       unsubVoice()
       unsubTranscript()
       unsubLocalCommand()
+      unsubNetwork()
+      unsubRetry()
     }
   }, [])
 
@@ -143,12 +158,23 @@ export function Toolbar() {
         <button type="button" className="toolbar__btn toolbar__btn--secondary" onClick={cycleConversation}>
           对话状态: {conversationState}
         </button>
+        <button
+          type="button"
+          className="toolbar__btn toolbar__btn--secondary"
+          onClick={() => appCore.cloudGateway.simulateWeakNetwork()}
+        >
+          模拟弱网
+        </button>
+        <span className="toolbar__stats">网络: {networkState}</span>
         <span className="toolbar__stats">语音: {voiceStatusLabel}</span>
         {lastTranscript && (
           <span className="toolbar__stats toolbar__stats--transcript">最近: {lastTranscript}</span>
         )}
         {localCommandMessage && (
           <span className="toolbar__stats toolbar__stats--local">本地: {localCommandMessage}</span>
+        )}
+        {retryMessage && (
+          <span className="toolbar__stats toolbar__stats--retry">{retryMessage}</span>
         )}
         <span className="toolbar__stats">已采集帧: {frameCount}</span>
       </div>

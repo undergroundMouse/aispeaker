@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { eventBus } from '../core/event-bus'
-import { mediaStreamManager } from '../core/media/MediaStreamManager'
+import { appCore } from '../core/bootstrap'
 import { MEDIA_EVENTS, type StreamState } from '../core/media/types'
 
 export function CameraPreview() {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [streamState, setStreamState] = useState<StreamState>(mediaStreamManager.getState())
+  const [streamState, setStreamState] = useState<StreamState>(
+    appCore.mediaStreamManager.getState(),
+  )
 
-  useEffect(() => eventBus.on<StreamState>(MEDIA_EVENTS.STREAM_STATE, setStreamState), [])
+  useEffect(() => {
+    return eventBus.on<StreamState>(MEDIA_EVENTS.STREAM_STATE, setStreamState)
+  }, [])
 
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+
     if (streamState.status === 'active' && streamState.stream) {
       video.srcObject = streamState.stream
       void video.play()
@@ -22,10 +27,13 @@ export function CameraPreview() {
   }, [streamState])
 
   const handleRetry = useCallback(() => {
-    void mediaStreamManager.start().catch(() => {})
+    void appCore.mediaStreamManager.start().catch(() => {})
   }, [])
 
-  if (streamState.status === 'inactive') return null
+  if (streamState.status === 'inactive') {
+    return null
+  }
+
   if (streamState.status === 'starting') {
     return (
       <div className="camera-preview camera-preview--loading">
@@ -33,17 +41,27 @@ export function CameraPreview() {
       </div>
     )
   }
+
   if (streamState.status === 'error' && streamState.error) {
     return (
       <div className="camera-preview camera-preview--error">
         <p>{streamState.error.message}</p>
-        <button type="button" onClick={handleRetry}>重试</button>
+        <button type="button" onClick={handleRetry}>
+          重试
+        </button>
       </div>
     )
   }
+
   return (
     <div className="camera-preview">
-      <video ref={videoRef} className="camera-preview__video" autoPlay playsInline muted />
+      <video
+        ref={videoRef}
+        className="camera-preview__video"
+        autoPlay
+        playsInline
+        muted
+      />
     </div>
   )
 }

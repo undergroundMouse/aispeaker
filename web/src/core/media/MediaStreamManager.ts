@@ -76,5 +76,3 @@ export class MediaStreamManager {
     eventBus.emit(MEDIA_EVENTS.STREAM_STATE, { ...next })
   }
 }
-
-export const mediaStreamManager = new MediaStreamManager()

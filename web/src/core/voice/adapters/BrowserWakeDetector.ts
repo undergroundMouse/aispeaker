@@ -9,6 +9,7 @@ export class BrowserWakeDetector implements WakeDetector {
   }
 
   async start(_phrase: string): Promise<void> {
+    void _phrase
     for (const handler of this.unavailableHandlers) handler()
   }
 

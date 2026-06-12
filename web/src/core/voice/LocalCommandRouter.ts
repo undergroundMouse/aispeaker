@@ -1,6 +1,8 @@
 import { eventBus } from '../event-bus'
 import type { ConversationManager } from '../conversation/ConversationManager'
 import type { CloudGateway } from '../cloud/CloudGateway'
+import type { LanguageStore } from '../i18n/LanguageStore'
+import { getMessages } from '../i18n/messages'
 import { LOCAL_COMMAND_EVENTS, VOICE_EVENTS, type LocalCommandResult, type VoiceTurn } from './types'
 import { matchLocalCommand } from './localCommands'
 
@@ -8,10 +10,16 @@ export class LocalCommandRouter {
   private unsubscribe?: () => void
   private readonly conversationManager: ConversationManager
   private readonly cloudGateway: CloudGateway
+  private readonly languageStore: LanguageStore
 
-  constructor(conversationManager: ConversationManager, cloudGateway: CloudGateway) {
+  constructor(
+    conversationManager: ConversationManager,
+    cloudGateway: CloudGateway,
+    languageStore: LanguageStore,
+  ) {
     this.conversationManager = conversationManager
     this.cloudGateway = cloudGateway
+    this.languageStore = languageStore
   }
 
   start(): void {
@@ -42,13 +50,15 @@ export class LocalCommandRouter {
     phrase: string,
     targetLanguage?: 'zh' | 'en',
   ): LocalCommandResult {
+    const text = getMessages(this.languageStore.getLanguage())
+
     switch (action) {
       case 'greet':
         this.conversationManager.setState('speaking')
         return {
           action,
           phrase,
-          message: '你好，我在。',
+          message: text.greet,
           handledLocally: true,
         }
       case 'goodbye':
@@ -56,7 +66,7 @@ export class LocalCommandRouter {
         return {
           action,
           phrase,
-          message: '再见。',
+          message: text.goodbye,
           handledLocally: true,
         }
       case 'stop-dialogue':
@@ -64,7 +74,7 @@ export class LocalCommandRouter {
         return {
           action,
           phrase,
-          message: '已停止对话。',
+          message: text.stopDialogue,
           handledLocally: true,
         }
       case 'take-photo': {
@@ -72,19 +82,23 @@ export class LocalCommandRouter {
         return {
           action,
           phrase,
-          message: saved ? '已触发拍照。' : '暂无可用画面，请先打开摄像头。',
+          message: saved ? text.takePhotoOk : text.takePhotoFail,
           handledLocally: true,
         }
       }
-      case 'switch-language':
+      case 'switch-language': {
+        if (targetLanguage) {
+          this.languageStore.setLanguage(targetLanguage)
+        }
+        const next = getMessages(this.languageStore.getLanguage())
         return {
           action,
           phrase,
-          message:
-            targetLanguage === 'en' ? 'Language switch will apply in PR-10.' : '语言切换将在 PR-10 生效。',
+          message: targetLanguage === 'en' ? next.switchEn : next.switchZh,
           handledLocally: true,
           targetLanguage,
         }
+      }
       default:
         return {
           action: 'greet',

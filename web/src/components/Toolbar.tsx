@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { appCore } from '../core/bootstrap'
 import { eventBus } from '../core/event-bus'
+import { LANGUAGE_EVENTS, type LanguageChangedPayload } from '../core/i18n/LanguageStore'
+import { getMessages } from '../core/i18n/messages'
 import { MEDIA_EVENTS, type ConversationState, type StreamState } from '../core/media/types'
 import {
   NETWORK_EVENTS,
@@ -16,6 +18,7 @@ import {
 } from '../core/voice/types'
 
 export function Toolbar() {
+  const [language, setLanguage] = useState(appCore.languageStore.getLanguage())
   const [streamState, setStreamState] = useState<StreamState>(
     appCore.mediaStreamManager.getState(),
   )
@@ -30,6 +33,7 @@ export function Toolbar() {
   const [networkState, setNetworkState] = useState(appCore.networkMonitor.getState())
   const [retryMessage, setRetryMessage] = useState('')
   const [frameCount, setFrameCount] = useState(0)
+  const text = useMemo(() => getMessages(language), [language])
 
   useEffect(() => {
     const unsubStream = eventBus.on<StreamState>(MEDIA_EVENTS.STREAM_STATE, setStreamState)
@@ -51,6 +55,10 @@ export function Toolbar() {
     const unsubRetry = eventBus.on<NetworkRetryPrompt>(NETWORK_EVENTS.RETRY_PROMPT, (payload) => {
       setRetryMessage(payload.message)
     })
+    const unsubLanguage = eventBus.on<LanguageChangedPayload>(LANGUAGE_EVENTS.CHANGED, (payload) => {
+      setLanguage(payload.language)
+      setRetryMessage('')
+    })
     return () => {
       unsubStream()
       unsubFrames()
@@ -59,6 +67,7 @@ export function Toolbar() {
       unsubLocalCommand()
       unsubNetwork()
       unsubRetry()
+      unsubLanguage()
     }
   }, [])
 
@@ -116,24 +125,24 @@ export function Toolbar() {
   const voiceStatusLabel =
     voiceState.error?.message ??
     ({
-      disabled: '已关闭',
-      'permission-requested': '请求权限中',
-      ready: '就绪',
-      'wake-listening': '唤醒监听中',
-      recording: '录音中',
-      transcribing: '识别中',
-      error: '异常',
+      disabled: text.voiceDisabled,
+      'permission-requested': text.voicePermission,
+      ready: text.voiceReady,
+      'wake-listening': text.voiceWake,
+      recording: text.voiceRecording,
+      transcribing: text.voiceTranscribing,
+      error: text.voiceError,
     }[voiceState.status] ?? voiceState.status)
 
   return (
     <header className="toolbar">
-      <h1 className="toolbar__title">AISpeaker</h1>
+      <h1 className="toolbar__title">{text.title}</h1>
       <div className="toolbar__actions">
         <button type="button" className="toolbar__btn" onClick={toggleCamera}>
-          {cameraOn ? '关闭摄像头' : '打开摄像头'}
+          {cameraOn ? text.cameraOn : text.cameraOff}
         </button>
         <button type="button" className="toolbar__btn" onClick={toggleVoice}>
-          {voiceOn ? '关闭麦克风' : '打开麦克风'}
+          {voiceOn ? text.voiceOn : text.voiceOff}
         </button>
         <button
           type="button"
@@ -141,7 +150,7 @@ export function Toolbar() {
           onClick={toggleWake}
           disabled={!voiceOn}
         >
-          {voiceState.wakeEnabled ? '关闭唤醒' : '开启唤醒'}
+          {voiceState.wakeEnabled ? text.wakeOn : text.wakeOff}
         </button>
         <button
           type="button"
@@ -153,30 +162,40 @@ export function Toolbar() {
           onTouchStart={startTalk}
           onTouchEnd={stopTalk}
         >
-          {voiceState.status === 'recording' ? '松开结束' : '按住说话'}
+          {voiceState.status === 'recording' ? text.talkStop : text.talkStart}
         </button>
         <button type="button" className="toolbar__btn toolbar__btn--secondary" onClick={cycleConversation}>
-          对话状态: {conversationState}
+          {text.conversation}: {conversationState}
         </button>
         <button
           type="button"
           className="toolbar__btn toolbar__btn--secondary"
           onClick={() => appCore.cloudGateway.simulateWeakNetwork()}
         >
-          模拟弱网
+          {text.simulateWeak}
         </button>
-        <span className="toolbar__stats">网络: {networkState}</span>
-        <span className="toolbar__stats">语音: {voiceStatusLabel}</span>
+        <span className="toolbar__stats">
+          {text.network}: {networkState}
+        </span>
+        <span className="toolbar__stats">
+          {text.voice}: {voiceStatusLabel}
+        </span>
         {lastTranscript && (
-          <span className="toolbar__stats toolbar__stats--transcript">最近: {lastTranscript}</span>
+          <span className="toolbar__stats toolbar__stats--transcript">
+            {text.recent}: {lastTranscript}
+          </span>
         )}
         {localCommandMessage && (
-          <span className="toolbar__stats toolbar__stats--local">本地: {localCommandMessage}</span>
+          <span className="toolbar__stats toolbar__stats--local">
+            {text.local}: {localCommandMessage}
+          </span>
         )}
         {retryMessage && (
           <span className="toolbar__stats toolbar__stats--retry">{retryMessage}</span>
         )}
-        <span className="toolbar__stats">已采集帧: {frameCount}</span>
+        <span className="toolbar__stats">
+          {text.frames}: {frameCount}
+        </span>
       </div>
     </header>
   )

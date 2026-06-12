@@ -1,13 +1,25 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { appCore } from './core/bootstrap'
 import { CameraPreview } from './components/CameraPreview'
 import { Toolbar } from './components/Toolbar'
+import { LANGUAGE_EVENTS, type LanguageChangedPayload } from './core/i18n/LanguageStore'
+import { getMessages } from './core/i18n/messages'
+import { eventBus } from './core/event-bus'
 import './App.css'
 
 function App() {
+  const [language, setLanguage] = useState(appCore.languageStore.getLanguage())
+  const text = useMemo(() => getMessages(language), [language])
+
   useEffect(() => {
     appCore.init()
-    return () => appCore.destroy()
+    const unsubLanguage = eventBus.on<LanguageChangedPayload>(LANGUAGE_EVENTS.CHANGED, (payload) => {
+      setLanguage(payload.language)
+    })
+    return () => {
+      unsubLanguage()
+      appCore.destroy()
+    }
   }, [])
 
   return (
@@ -16,9 +28,9 @@ function App() {
       <main className="app__main">
         <CameraPreview />
         <section className="app__hint">
-          <p>打开摄像头后，系统将按对话状态智能抽帧并送入 AI 处理链路。</p>
-          <p>对话中 2 fps，空闲 10 秒后降至 0.5 fps。视频仅实时处理，不会持久化存储。</p>
-          <p>打开麦克风后可按住说话，或尝试开启语音唤醒。语音仅实时识别，不会持久化存储。</p>
+          <p>{text.cameraHint1}</p>
+          <p>{text.cameraHint2}</p>
+          <p>{text.voiceHint}</p>
         </section>
       </main>
     </div>

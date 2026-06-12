@@ -1,0 +1,240 @@
+模块总览
+模块	部署位置	核心职责	依赖接口
+MediaPipeline	端侧	音视频采集、降噪、VAD、智能抽帧	–
+LocalInferenceEngine	端侧	运行轻量模型（检测/分类/姿态），提取特征，生成主动提示候选	–
+PersonalMemoryCore	端侧	自定义物体向量存储检索；长期记忆增删查改与语义匹配	–
+ProactiveTrigger	端侧	规则引擎，合并主动提示候选，频率控制，语音指令解析	–
+ConversationManager	端侧	对话状态机，协调ASR/TTS，维护上下文，决策本地/云端处理	/asr/stream, /vision/chat, /tts/speech
+ExplainabilityRenderer	端侧	根据坐标绘制高亮框，播报解释	– (消费/vision/chat返回数据)
+CloudGateway	端侧	封装HTTP/WSS调用，自动重试，token计量，离线缓存	所有云端接口
+ASR适配器	云端	对接语音识别引擎，提供流式转写服务	向/asr/stream提供数据
+视觉理解服务	云端	包装视觉大模型，强制结构化输出（坐标+解释）	处理/vision/chat请求
+对话编排服务	云端	上下文拼接，调用大模型，解析记忆建议	内部调用视觉理解服务
+TTS适配器	云端	语音合成，流式返回音频	处理/tts/speech请求
+记忆备份服务	云端	加密记忆的托管存取	/memory/backup (GET/POST)
+运营监控服务	云端	成本统计、限额管理	/cost/status
+3. 端侧模块详细设计
+3.1 MediaPipeline
+职责：从浏览器获取摄像头/麦克风流，应用降噪、回声消除，执行语音活动检测(VAD)，视频帧按策略采样。
+
+内部行为：
+
+有对话时保持2 fps采样，无对话10秒后降至0.5 fps（节能模式）。
+
+VAD识别有效语音段后，将音频片段传递给ConversationManager。
+
+视频帧原图传递给LocalInferenceEngine，同时根据请求输出缩略图（224×224）给CloudGateway。
+
+输出：PCM音频段（16kHz, 16bit）、原始视频帧、缩略图。
+
+3.2 LocalInferenceEngine
+职责：运行端侧模型，产出结构化感知结果。
+
+内部模型：
+
+PP-YOLOE (目标检测)：输出物体类别、置信度、边界框（归一化坐标）。
+
+PP-HumanSeg (人像分割/关键点)：用于手势、危险姿态识别。
+
+PP-LCNet (特征提取)：对ROI提取256维特征向量，供自定义物体匹配。
+
+输出：检测物体列表 [{"label":"杯子","box":[x,y,w,h],"conf":0.95}]，场景类别，危险状态标志等。
+
+与PersonalMemoryCore交互：将每个检测到的物体特征发给PersonalMemoryCore进行向量检索，得到用户自定义标签或“未知”。
+
+3.3 PersonalMemoryCore
+职责：管理两个存储库：向量数据库(自定义物体)与结构化记忆库(长期记忆)。
+
+存储技术：
+
+向量数据库：LanceDB (wasm) 存储 {label, embedding}，支持近邻搜索。
+
+长期记忆：IndexedDB 存储 {id, type, content, timestamp, strength, embedding}。使用text2vec-base-chinese提取记忆文本的语义向量，支持相似检索。
+
+关键操作：
+
+教学物体：接收ROI特征与用户语音标签，存入向量库。
+
+识别物体：接收特征向量，返回最相似标签(余弦相似度>0.85)。
+
+记忆增删查改：提供CRUD接口，支持语义搜索（如“咖啡杯”）。
+
+记忆演化：访问时增加强度，定期衰减低于阈值的记忆。
+
+接口依赖：无云端调用(备份除外)。备份时调用 POST /memory/backup。
+
+3.4 ProactiveTrigger
+职责：维护规则引擎，基于LocalInferenceEngine输出和历史状态触发主动语音提示。
+
+规则示例：
+
+物品遗留：物体A在画面中消失，且30秒未再出现，且记忆库中物体A有“重要”标记 → 触发“你的A可能落下了”。
+
+危险状态：检测到“火”/“刀具”且人体关键点显示无人 → “灶火还开着，请注意安全”。
+
+建议提醒：检测到用户常找的物品在视野外时提示。
+
+节制机制：
+
+同一事件30分钟内不重复。
+
+每分钟最多1条提示。
+
+深夜(22:00-07:00)静默。
+
+用户语音指令可开关(“闭嘴”/“多提醒我”)。
+
+输出：决定提示时生成提示文本，交给ConversationManager用本地TTS播报。极少情况下通过ConversationManager请求/vision/chat上传关键帧让云端判断(日均≤3次)。
+
+隐私保护：所有画面分析在端侧完成，敏感信息过滤(如OCR到数字串不朗读)。
+
+3.5 ConversationManager
+职责：端侧对话中枢，维护对话状态，决策路由。
+
+状态机：空闲 → 聆听(ASR进行中) → 思考(本地或云端处理中) → 播报(TTS中) → 空闲。
+
+决策逻辑：
+
+简单指令(如“你好”“停止”)本地匹配并直接动作。
+
+需要知识问答或多模态理解时，组装上下文调用CloudGateway发起/vision/chat。
+
+接收/vision/chat响应后，解析answer、regions、memory_suggestions，并分发至TTS、ExplainabilityRenderer、PersonalMemoryCore。
+
+接口依赖：/asr/stream (上传音频，接收识别文本), /vision/chat, /tts/speech。
+
+3.6 CloudGateway
+职责：封装所有与云端的通信，对外提供简单Promise/回调接口。
+
+功能：
+
+为每个请求注入JWT(token由会话管理持有)。
+
+自动重试(最多2次)，失败降级(网络不佳提示)。
+
+每次调用/vision/chat前计算预估token(图像85 token + 文本)并与本地限额比对，超出则拒绝并提示。
+
+维护WebSocket连接(/asr/stream)，支持断线重连。
+
+接口依赖：所有云端接口。
+
+3.7 ExplainabilityRenderer
+职责：可视化解释。接收regions数组，在视频Canvas上叠加半透明高亮框和文字，并触发本地TTS朗读简短解释。
+
+输入：来自/vision/chat返回的regions列表，格式[{"box":[x,y,w,h],"label":"咖啡杯","explanation":"红色陶瓷材质"}]。
+
+行为：坐标归一化转为像素坐标，绘制矩形；若无坐标则不做视觉高亮。
+
+4. 云端模块详细设计
+4.1 ASR适配器
+职责：对接第三方语音识别引擎(阿里Paraformer/讯飞)，通过WebSocket提供流式识别。
+
+输入：音频流。
+
+输出：JSON文本帧 {"text":"...","is_final":true}。
+
+接口：实现/asr/stream端点，详细见API文档。
+
+4.2 视觉理解服务
+职责：封装通义千问VL/智谱GLM-4V，强制输出结构化结果。
+
+输入：图片(base64)、prompt、context(含历史、端侧物体、记忆提示)。
+
+系统提示词约束：必须返回JSON包含answer和regions，不确定时坐标留空。
+
+输出：JSON格式的应答、区域坐标、记忆建议、可选主动触发。
+
+接口：实现/vision/chat端点。
+
+4.3 对话编排服务
+职责：组装视觉理解服务的请求上下文，解析其响应，生成最终给端侧的数据包。
+
+工作流：
+
+接收端侧context，拼接对话历史、端侧物体列表、记忆提示为完整prompt。
+调用视觉理解服务。
+解析JSON，确保格式符合API文档。
+将记忆建议(memory_suggestions)打包。
+返回给客户端。
+4.4 TTS适配器
+职责：调用语音合成引擎(阿里CosyVoice/火山引擎)，提供REST接口。
+
+输入：文本、音色、速度。
+
+输出：MP3音频流。
+
+接口：/tts/speech。
+
+4.5 记忆备份服务
+职责：接受用户加密的记忆数据备份，提供恢复。服务器无法解密。
+
+接口：POST /memory/backup, GET /memory/backup/{id}。
+
+4.6 运营监控服务
+职责：记录每次API调用的token消耗、成本，提供查询。
+
+接口：GET /cost/status。
+
+5. 模块间典型交互流程
+5.1 自定义物体教学 (US-10)
+用户语音“记住，这是我的咖啡杯”。
+
+MediaPipeline捕获语音和视频帧。
+
+ConversationManager通过/asr/stream得到转写文本，解析出“记住”意图。
+
+LocalInferenceEngine对当前帧检测到最显著物体，裁剪ROI。
+
+LocalInferenceEngine用PP-LCNet提取ROI特征向量。
+
+ConversationManager将特征向量+标签“我的咖啡杯”调用PersonalMemoryCore存入向量库。
+
+本地TTS回应“已记住”。
+全程无云端调用。
+
+5.2 可解释视觉问答 (US-14)
+用户问“为什么觉得这是苹果？”
+
+ConversationManager收到ASR文本，决定需云端处理。
+
+通过CloudGateway调用POST /vision/chat，附带当前缩略图、prompt、端侧检测结果、记忆提示。
+
+云端视觉理解服务返回：
+
+json
+{
+  "answer": "因为红色圆形区域和叶柄。",
+  "regions": [{"box":[0.2,0.3,0.4,0.5],"label":"苹果","explanation":"红圆形状和叶柄"}]
+}
+ConversationManager分发给ExplainabilityRenderer绘制高亮框，并调用/tts/speech播报解释。
+
+同时将记忆建议更新到PersonalMemoryCore。
+
+5.3 主动安全提示 (US-16)
+LocalInferenceEngine持续检测到灶台火焰和无人状态。
+
+ProactiveTrigger规则命中，检查频率限制(未重复、未超上限)。
+
+生成本地提示文本“灶火还开着，请注意安全”。
+
+ConversationManager直接用本地TTS播报(无需云端)。
+
+如果场景复杂模糊(如桌面有疑似重要文件但无法确定)，ProactiveTrigger通过ConversationManager请求/vision/chat上传加密关键帧，云端返回proactive_triggers字段，端侧判断后播报。
+
+6. 数据格式约定
+所有坐标使用归一化[x_center, y_center, width, height]，范围0~1。
+
+图像传输格式为JPEG，分辨率224×224，Base64编码。
+
+音频采用PCM 16kHz/16bit单声道。
+
+时间戳为ISO8601 UTC。
+
+7. 错误处理与降级策略
+网络异常：CloudGateway重试2次后提示用户“网络不佳，请重试”。离线时仅使用端侧能力。
+
+ASR识别失败：返回is_final=true, text=""时，ConversationManager提示用户重复。
+
+视觉大模型不确定：返回regions:[]，端侧不绘制高亮，并播报“我看不清楚”。
+
+超出日预算：CloudGateway拦截/vision/chat调用，通知用户“今日云端用量已满，已切换至离线模式”。

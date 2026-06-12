@@ -1,0 +1,132 @@
+1. 总体架构
+系统遵循 “端侧为主、云端为辅” 原则，将高频率、低延迟、强隐私的操作留在浏览器本地，仅复杂推理与高精度识别访问云端。整体分为四层：
+
+
+端侧 负责 >85% 的日常处理，保证实时性与隐私。
+
+云端 仅处理高价值请求，单用户日均调用 ≤ 10 次，成本可控。
+
+2. 前端架构详设
+前端以 Web Components + 微内核 方式组织，内核（Core）独立于 UI 框架（React/Vue），通过事件总线通信。
+
+2.1 核心模块
+模块	职责	关键依赖
+MediaStreamManager	打开摄像头/麦克风，应用降噪、VAD、智能抽帧（有对话 2fps，节能 0.5fps）	WebRTC, @ricky0123/vad-web
+LocalInferenceEngine	运行所有端侧模型：物体检测、场景分类、手势/危险姿态识别、人脸属性（表情）	Paddle.js / ONNX Runtime Web, PP-YOLOE, PP-HumanSeg
+PersonalMemoryCore	自定义物体特征提取与向量搜索、长期记忆 CRUD、语义关联	LanceDB (wasm), text2vec-base-chinese (量化)
+ProactiveTrigger	持续分析视频流与检测结果，结合规则触发主动提示，控制频率与优先级	规则引擎, 状态机
+ExplainabilityRenderer	根据坐标/热力图，在 Canvas 上绘制高亮框和解释文字	Canvas API, SpeechSynthesis API
+ConversationManager	对话状态机（空闲/聆听/思考/播报），管理上下文队列，协调 TTS/ASR	Web Audio API, 状态机
+CloudGateway	封装所有云端 API 请求，自动重试、离线缓存、Token 预估与限额检查	Axios, WebSocket
+2.2 数据流示例：一次多模态问答
+用户点击/语音唤醒 → MediaStreamManager 开始发送音频至本地 VAD，视频帧至 LocalInferenceEngine。
+
+本地检测到物体，提取特征检索自定义记忆库 → 命中“我的咖啡杯”。
+
+VAD 检测到完整语音段 → 音频流发送云端 ASR → 返回文本“杯子在哪”。
+
+ConversationManager 组装上下文：当前视频物体列表 + 记忆摘要 + 历史对话 → 调用 CloudGateway.visionInfer()。
+
+云端通义千问VL 返回：{ answer: "它在你右手边", regions: [{box: [0.5,0.3,0.2,0.2], explanation: "银色的杯子"}] }。
+
+ExplainabilityRenderer 绘制高亮框，TTS 播报答案。
+
+同时 ProactiveTrigger 后台检测到物体离开视野，30s 后触发“你的咖啡杯好像落在客厅了”。
+
+3. 后端架构详设
+后端采用 函数计算 + 托管服务 的轻量部署，降低运维成本。
+
+3.1 服务定义
+API 网关：所有请求入口，执行 JWT 鉴权、限流（单用户 10 req/min）、成本记录。
+
+ASR 适配器：对接阿里云/讯飞流式接口，统一返回 {text, is_final, timestamp}。
+
+视觉理解服务：封装通义千问VL / GLM-4V，强制输出结构化 JSON（含区域坐标）。系统提示词严格约束不确定性表达。
+
+对话编排服务：无状态函数，负责拼接端侧上下文、调用视觉大模型、解析返回、生成记忆更新建议。
+
+TTS 适配器：对接阿里云 CosyVoice，支持流式合成与缓存常用短语。
+
+运营监控服务：聚合每日 Token 消耗、用户请求量、错误率，提供简单 Dashboard。
+
+3.2 关键 API 设计
+接口	方法	说明	请求/响应要点
+/asr/stream	WSS	流式上传音频，实时返回识别文本	二进制帧 → {text, is_final}
+/vision/chat	POST	多模态对话	{image_base64, prompt, context, session_id} → {answer, regions[{box, label, explanation}], memory_hints}
+/tts/speech	POST	文本转语音	{text, voice, speed} → 音频流
+/memory/backup	POST	长期记忆云端备份（用户授权后）	{encrypted_memories} → {success}
+/cost/status	GET	查询当前用量	{daily_tokens, daily_cost, limit}
+视觉大模型输出约束（提示词内置）：
+
+对所有物体识别，必须在 regions 中给出归一化边界框和简短判断依据。
+
+若不确定，回答必须包含“不确定”且坐标留空。
+
+主动提示类回答，语气需委婉（“似乎”“可能需要”）。
+
+4. 创新点实现路径
+4.1 个性化物体记忆（零样本增量学习）
+教学：用户语音“记住，这是 XX” + 物体在检测框中。LocalInferenceEngine 截取 ROI，使用 PP-LCNet 提取 256 维特征，存入 LanceDB，标签为“XX”。完全本地，0 云端成本。
+
+识别：每次检测到物体，先在向量库搜索（余弦相似度>0.85）。命中则直接返回用户标签，拦截 15%~20% 云端请求。
+
+管理：PersonalMemoryCore 提供 API 增删改查，UI 列表展示，语音“忘记 XX”实时生效。
+
+4.2 主动情境感知与智能提示
+规则引擎内置三类触发器：
+
+物品遗留：已识别物体（置信度>0.9）从画面消失，30s 未归，且该物体在长期记忆中有“重要”标记 → 提示。
+
+危险状态：YOLO 检测到“火/刀具”且人体关键点分析显示“无人看管” → 提示。
+
+优化建议：长期记忆发现用户常做某动作（如找钥匙），当检测到钥匙在视野外时主动提醒。
+
+节制性：同一事件 30min 不重复，每分钟≤1 条，深夜免打扰，语音指令“闭嘴”/“多提醒”可开关。
+
+隐私：触发分析均在端侧，仅当画面出现“未知重要包裹”等罕见场景，才加密上传关键帧让云端判断。
+
+4.3 长期对话记忆与用户画像
+存储：IndexedDB 中结构化记忆 {type, content, time, access_count, strength}。使用 text2vec-base-chinese 将记忆文本向量化，支持语义相似检索。
+
+演化：每次交互提取可记忆点（喜好、位置、习惯），相同类型记忆会强化强度；30 天未访问则自动降权，提醒用户回顾。
+
+注入：每次云端请求前，从记忆库检索 top-3 最相关记忆，拼入系统提示词：“用户偏好红色，咖啡杯通常放在厨房”。
+
+4.4 可解释性视觉问答
+双层坐标体系：端侧检测模型给出精确物体框，云端大模型负责语义解释。高亮框由端侧绘制，确保坐标精准。
+
+渲染：ExplainabilityRenderer 在视频 Canvas 上叠加半透明框，并显示“红色圆形（苹果）”，同时 TTS 播出解释。
+
+信任闭环：无坐标时不展示高亮，且语音明确说“我不确定”，避免幻觉。
+
+5. 国内模型替换清单
+原架构模型	国内替代	部署位置	用途
+GPT-4V / LLaVA	通义千问VL / 智谱 GLM-4V / 文心一言	云端	多模态理解、解释生成
+Whisper	阿里云 Paraformer / 讯飞流式 ASR	云端	语音识别
+ElevenLabs / Edge TTS	阿里云 CosyVoice / 火山引擎 TTS	云端	语音合成
+TensorFlow.js MobileNet	Paddle.js + PP-YOLOE / PP-LCNet	端侧	物体检测、特征提取
+ResNet Embedding	PP-LCNet 或 MobileNetV3（国产蒸馏版）	端侧	自定义物体特征
+fasttext / sentence-transformers	text2vec-base-chinese (4MB量化)	端侧	长期记忆语义检索
+LanceDB / sqlite-vss	LanceDB (wasm) 或 Milvus Lite	端侧	向量数据库
+注意：所有云端服务均选择国内数据中心部署，满足数据合规。
+
+6. 成本控制与性能预估
+端侧分流：85% 交互完全本地处理，云端日调用 ≤10 次/用户。
+
+模型计价：通义千问VL 单图 ≈ ¥0.002，ASR ¥0.01/分钟，TTS ¥0.001/千字 → 日均成本 < ¥0.15/用户。
+
+主动提示：94% 本地触发，云端辅助判断日均 ≤3 次，额外成本 < ¥0.01。
+
+节能模式：无对话自动降采样率，端侧推理负担降低 60%。
+
+运营仪表盘实时显示成本，可设每日预算上限，自动降级为纯端侧模式。
+
+7. 安全与隐私保障
+端侧存储加密：所有个性化数据（向量、记忆）使用 Web Crypto API AES-GCM 加密，密钥由用户本地生成。
+
+云端零持久化：视频、音频、图片处理即焚，不写入日志；脱敏后的 Token 计数仅存运营库。
+
+用户控制权：一键清除所有本地数据、导出记忆 JSON、禁用主动提示、关闭云端同步。
+
+关键信息保护：OCR 识别到连续数字（可能为身份证号等）时，主动提示仅笼统提醒“可能有重要证件”，不朗读具体内容。
+

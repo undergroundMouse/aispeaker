@@ -52,9 +52,37 @@
   background: #363a45;
 }
 
+.toolbar__btn--talk {
+  background: #34a853;
+}
+
+.toolbar__btn--talk:hover {
+  background: #2d9249;
+}
+
+.toolbar__btn--talk-active {
+  background: #ea4335;
+}
+
+.toolbar__btn--talk-active:hover {
+  background: #d33426;
+}
+
+.toolbar__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .toolbar__stats {
   font-size: 0.8rem;
   color: #9aa0a6;
+}
+
+.toolbar__stats--transcript {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app__main {

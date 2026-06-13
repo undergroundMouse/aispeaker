@@ -26,6 +26,7 @@ export class CloudGateway {
   private readonly languageStore?: LanguageStore
   private readonly customObjectStore: CustomObjectStore
   private readonly customObjectExtractor: CustomObjectFeatureExtractor
+  private lastCustomObjectId: string | null = null
 
   constructor(
     conversationManager?: ConversationManager,
@@ -79,6 +80,7 @@ export class CloudGateway {
         timestamp: Date.now(),
       }
       eventBus.emit(CUSTOM_OBJECT_EVENTS.RECOGNIZED, payload)
+      this.lastCustomObjectId = customObject.customObjectId ?? null
       this.conversationManager?.setState('idle')
       return
     }
@@ -101,6 +103,26 @@ export class CloudGateway {
 
   simulateWeakNetwork(): void {
     this.networkMonitor?.markCloudFailure()
+  }
+
+  async forgetLastCustomObject(): Promise<boolean> {
+    if (!this.lastCustomObjectId) return false
+
+    const deleted = await this.customObjectStore.delete(this.lastCustomObjectId)
+    if (deleted) {
+      this.lastCustomObjectId = null
+    }
+    return deleted
+  }
+
+  async undoLastCustomObjectTeaching(): Promise<boolean> {
+    const deleted = await this.customObjectStore.deleteLastTeaching()
+    if (!deleted) return false
+
+    if (this.lastCustomObjectId === deleted.id) {
+      this.lastCustomObjectId = null
+    }
+    return true
   }
 
   capturePhoto(): boolean {

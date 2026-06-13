@@ -4,6 +4,8 @@ export type LocalCommandAction =
   | 'stop-dialogue'
   | 'take-photo'
   | 'switch-language'
+  | 'forget-custom-object'
+  | 'undo-custom-object-teaching'
 
 export interface LocalCommand {
   id: string
@@ -37,6 +39,16 @@ export const LOCAL_COMMANDS: LocalCommand[] = [
     id: 'take-photo',
     action: 'take-photo',
     phrases: ['拍照', '截图', 'take photo', 'capture'],
+  },
+  {
+    id: 'forget-custom-object',
+    action: 'forget-custom-object',
+    phrases: ['忘记那个物体', '忘记这个物体', 'forget that object', 'forget this object'],
+  },
+  {
+    id: 'undo-custom-object-teaching',
+    action: 'undo-custom-object-teaching',
+    phrases: ['撤销最后一次教学', '撤销教学', 'undo last teaching', 'undo teaching'],
   },
   {
     id: 'switch-english',

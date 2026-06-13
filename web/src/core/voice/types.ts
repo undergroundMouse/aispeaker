@@ -58,6 +58,8 @@ export type LocalCommandAction =
   | 'stop-dialogue'
   | 'take-photo'
   | 'switch-language'
+  | 'forget-custom-object'
+  | 'undo-custom-object-teaching'
 
 export interface LocalCommandResult {
   action: LocalCommandAction

@@ -37,19 +37,24 @@ export class LocalCommandRouter {
     const match = matchLocalCommand(turn.text)
 
     if (match) {
-      const result = this.executeLocal(match.command.action, match.phrase, match.command.targetLanguage)
-      eventBus.emit(LOCAL_COMMAND_EVENTS.EXECUTED, result)
+      void this.executeLocal(
+        match.command.action,
+        match.phrase,
+        match.command.targetLanguage,
+      ).then((result) => {
+        eventBus.emit(LOCAL_COMMAND_EVENTS.EXECUTED, result)
+      })
       return
     }
 
     void this.cloudGateway.submitComplexTurn(turn)
   }
 
-  private executeLocal(
+  private async executeLocal(
     action: LocalCommandResult['action'],
     phrase: string,
     targetLanguage?: 'zh' | 'en',
-  ): LocalCommandResult {
+  ): Promise<LocalCommandResult> {
     const text = getMessages(this.languageStore.getLanguage())
 
     switch (action) {
@@ -83,6 +88,36 @@ export class LocalCommandRouter {
           action,
           phrase,
           message: saved ? text.takePhotoOk : text.takePhotoFail,
+          handledLocally: true,
+        }
+      }
+      case 'forget-custom-object': {
+        const deleted = await this.cloudGateway.forgetLastCustomObject()
+        return {
+          action,
+          phrase,
+          message: deleted
+            ? (this.languageStore.getLanguage() === 'zh'
+                ? '已忘记该物体。'
+                : 'I forgot that object.')
+            : (this.languageStore.getLanguage() === 'zh'
+                ? '我还不知道你指的是哪个物体。'
+                : 'I am not sure which object you mean.'),
+          handledLocally: true,
+        }
+      }
+      case 'undo-custom-object-teaching': {
+        const undone = await this.cloudGateway.undoLastCustomObjectTeaching()
+        return {
+          action,
+          phrase,
+          message: undone
+            ? (this.languageStore.getLanguage() === 'zh'
+                ? '已撤销最后一次教学。'
+                : 'I undid the last teaching.')
+            : (this.languageStore.getLanguage() === 'zh'
+                ? '没有可撤销的教学记录。'
+                : 'There is no teaching action to undo.'),
           handledLocally: true,
         }
       }

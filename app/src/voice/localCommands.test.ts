@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   canRouteComplexRequest,
-  getNetworkRetryMessage,
   matchLocalCommand,
   normalizePhrase,
 } from './localCommands'
+import { getNetworkRetryMessage } from './cloudFailureMessages'
 
 describe('localCommands', () => {
   it('normalizes punctuation, casing, and whitespace', () => {

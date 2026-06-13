@@ -1,4 +1,4 @@
-import type { AppLanguage, LocalCommand, LocalCommandMatch, NetworkState } from '../types'
+import type { LocalCommand, LocalCommandMatch, NetworkState } from '../types'
 
 export const localCommands: LocalCommand[] = [
   {
@@ -100,8 +100,4 @@ export function matchLocalCommand(
 
 export function canRouteComplexRequest(networkState: NetworkState): boolean {
   return networkState === 'online'
-}
-
-export function getNetworkRetryMessage(language: AppLanguage): string {
-  return language === 'zh' ? '网络不佳，请重试' : 'Network is poor. Please try again.'
 }

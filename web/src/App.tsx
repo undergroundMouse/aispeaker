@@ -46,6 +46,10 @@ function App() {
     forgetAllLongTermMemories,
     setCloudMemoryAccess,
     setCloudSummarySync,
+    setCameraCaptureConsent,
+    setMicrophoneCaptureConsent,
+    setCloudMediaTransmissionConsent,
+    mediaPrivacyConsent,
     markCloudRequestFailed,
   } = useRealtimeVisionVoice()
   const text = useMemo(() => getMessages(language), [language])
@@ -158,6 +162,32 @@ function App() {
               onChange={(event) => setCloudSummarySync(event.target.checked)}
             />
             Enable summary-only cloud memory sync
+          </label>
+
+          <h3>Media privacy</h3>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={mediaPrivacyConsent.cameraCapture}
+              onChange={(event) => setCameraCaptureConsent(event.target.checked)}
+            />
+            Authorize camera capture
+          </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={mediaPrivacyConsent.microphoneCapture}
+              onChange={(event) => setMicrophoneCaptureConsent(event.target.checked)}
+            />
+            Authorize microphone capture
+          </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={mediaPrivacyConsent.cloudMediaTransmission}
+              onChange={(event) => setCloudMediaTransmissionConsent(event.target.checked)}
+            />
+            Authorize cloud media transmission
           </label>
 
           <div className="transcript-box">

@@ -90,6 +90,17 @@ describe('mediaCapture', () => {
     expect(state.microphoneStatus).toBe('permission-denied')
   })
 
+  it('blocks capture when explicit consent is revoked', async () => {
+    const state = await requestMediaCapture(createMediaDevices(() => Promise.resolve(new MockMediaStream([]) as unknown as MediaStream)), {
+      cameraCapture: false,
+      microphoneCapture: false,
+      cloudMediaTransmission: false,
+    })
+
+    expect(state.status).toBe('permission-denied')
+    expect(state.errorMessage).toContain('authorization')
+  })
+
   it('returns unsupported when getUserMedia is unavailable', async () => {
     const state = await requestMediaCapture({} as MediaDevices)
 

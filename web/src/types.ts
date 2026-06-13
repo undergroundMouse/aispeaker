@@ -539,6 +539,12 @@ export interface LocalCommandMatch {
   phrase: string
 }
 
+export interface MediaPrivacyConsent {
+  cameraCapture: boolean
+  microphoneCapture: boolean
+  cloudMediaTransmission: boolean
+}
+
 export type NetworkState = 'online' | 'weak' | 'offline'
 
 export type DialogueTrigger = 'push-to-talk' | 'wake-word'

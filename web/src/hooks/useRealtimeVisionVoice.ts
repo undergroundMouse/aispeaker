@@ -28,7 +28,9 @@ import {
 } from '../ai/proactivePrompts'
 import { VideoFrameSampler } from '../ai/videoFrameSampler'
 import { buildSpeakableAnswerText, createActiveVisualEvidence, isVisualEvidenceExpired } from '../ai/visualEvidence'
+import { releaseSampledVideoFrame } from '../media/ephemeralMedia'
 import { emptyMediaCaptureState, requestMediaCapture, stopMediaCapture } from '../media/mediaCapture'
+import { loadMediaPrivacyConsent, saveMediaPrivacyConsent } from '../media/mediaPrivacy'
 import { deriveNetworkState } from '../network/networkState'
 import type {
   AppLanguage,
@@ -41,6 +43,7 @@ import type {
   LongTermMemoryStoreStatus,
   LocalVisionSignals,
   MediaCaptureState,
+  MediaPrivacyConsent,
   NetworkState,
   ProactivePromptCandidate,
   ProactivePromptState,
@@ -144,6 +147,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   })
   const [latencyMetrics, setLatencyMetrics] = useState<VoiceLatencyMetrics | null>(null)
   const [lastCloudRequestFailedAt, setLastCloudRequestFailedAt] = useState<number | null>(null)
+  const [mediaPrivacyConsent, setMediaPrivacyConsent] = useState<MediaPrivacyConsent>(() => loadMediaPrivacyConsent())
   const [tick, setTick] = useState(0)
 
   const samplingMode = useMemo<SamplingMode>(() => {
@@ -178,7 +182,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   useEffect(() => {
     let disposed = false
 
-    requestMediaCapture().then((state) => {
+    requestMediaCapture(undefined, mediaPrivacyConsent).then((state) => {
       if (disposed) {
         stopMediaCapture(state)
         return
@@ -195,7 +199,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         return emptyMediaCaptureState()
       })
     }
-  }, [])
+  }, [mediaPrivacyConsent])
 
   useEffect(() => {
     let disposed = false
@@ -317,7 +321,12 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       samplerRef.current ??
       new VideoFrameSampler({
         video: videoRef.current,
-        onFrame: setLastFrame,
+        onFrame: (frame) => {
+          setLastFrame((previous) => {
+            releaseSampledVideoFrame(previous)
+            return frame
+          })
+        },
       })
 
     samplerRef.current.setMode(samplingMode)
@@ -435,6 +444,18 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
 
   const setCloudSummarySync = useCallback((enabled: boolean) => {
     setLongTermMemoryConsent((consent) => ({ ...consent, cloudSummarySync: enabled }))
+  }, [])
+
+  const setCameraCaptureConsent = useCallback((enabled: boolean) => {
+    setMediaPrivacyConsent((consent) => saveMediaPrivacyConsent({ ...consent, cameraCapture: enabled }))
+  }, [])
+
+  const setMicrophoneCaptureConsent = useCallback((enabled: boolean) => {
+    setMediaPrivacyConsent((consent) => saveMediaPrivacyConsent({ ...consent, microphoneCapture: enabled }))
+  }, [])
+
+  const setCloudMediaTransmissionConsent = useCallback((enabled: boolean) => {
+    setMediaPrivacyConsent((consent) => saveMediaPrivacyConsent({ ...consent, cloudMediaTransmission: enabled }))
   }, [])
 
   const updateProactivePromptState = useCallback((updater: (state: ProactivePromptState) => ProactivePromptState) => {
@@ -831,6 +852,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     feedback,
     speechState,
     latencyMetrics,
+    mediaPrivacyConsent,
     setWatchOnly,
     setLanguage,
     startPushToTalk,
@@ -844,6 +866,9 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     forgetAllLongTermMemories,
     setCloudMemoryAccess,
     setCloudSummarySync,
+    setCameraCaptureConsent,
+    setMicrophoneCaptureConsent,
+    setCloudMediaTransmissionConsent,
     markCloudRequestFailed,
   }
 }

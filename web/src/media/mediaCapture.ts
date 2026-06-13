@@ -1,4 +1,5 @@
-import type { DeviceStatus, MediaCaptureState, MediaStatus } from '../types'
+import type { DeviceStatus, MediaCaptureState, MediaPrivacyConsent, MediaStatus } from '../types'
+import { canStartMediaCapture, isCameraCaptureAuthorized, isMicrophoneCaptureAuthorized } from './mediaPrivacy'
 
 const cameraConstraints: MediaStreamConstraints = {
   video: {
@@ -31,7 +32,18 @@ export function isMediaCaptureSupported(mediaDevices = navigator.mediaDevices): 
 
 export async function requestMediaCapture(
   mediaDevices = navigator.mediaDevices,
+  consent?: MediaPrivacyConsent,
 ): Promise<MediaCaptureState> {
+  if (consent && !canStartMediaCapture(consent)) {
+    return {
+      ...emptyMediaCaptureState(),
+      status: 'permission-denied',
+      cameraStatus: 'permission-denied',
+      microphoneStatus: 'permission-denied',
+      errorMessage: 'Media capture requires explicit user authorization.',
+    }
+  }
+
   if (!isMediaCaptureSupported(mediaDevices)) {
     return {
       ...emptyMediaCaptureState(),
@@ -42,10 +54,21 @@ export async function requestMediaCapture(
     }
   }
 
-  const [cameraResult, microphoneResult] = await Promise.allSettled([
-    mediaDevices.getUserMedia(cameraConstraints),
-    mediaDevices.getUserMedia(microphoneConstraints),
-  ])
+  const requests: Array<Promise<MediaStream>> = []
+
+  if (!consent || isCameraCaptureAuthorized(consent)) {
+    requests.push(mediaDevices.getUserMedia(cameraConstraints))
+  } else {
+    requests.push(Promise.reject(new DOMException('Camera capture not authorized.', 'NotAllowedError')))
+  }
+
+  if (!consent || isMicrophoneCaptureAuthorized(consent)) {
+    requests.push(mediaDevices.getUserMedia(microphoneConstraints))
+  } else {
+    requests.push(Promise.reject(new DOMException('Microphone capture not authorized.', 'NotAllowedError')))
+  }
+
+  const [cameraResult, microphoneResult] = await Promise.allSettled(requests)
 
   const cameraStream = getFulfilledStream(cameraResult)
   const microphoneStream = getFulfilledStream(microphoneResult)

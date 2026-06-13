@@ -62,24 +62,46 @@ export class WebSpeechTtsProvider implements TtsProvider {
       utterance.voice = selectedVoice
     }
 
-    const result = await new Promise<TtsEvent>((resolve) => {
-      utterance.onstart = () => {
-        resolve({ type: 'first-audio', at: Date.now(), provider: this.kind })
-      }
-      utterance.onend = () => {
-        resolve({ type: 'end', at: Date.now(), provider: this.kind })
-      }
-      utterance.onerror = (event) => {
-        resolve(errorEvent(this.kind, event.error || 'Speech synthesis failed.'))
-      }
-
-      this.synthesis?.speak(utterance)
+    let firstAudioEmitted = false
+    let resolveFirstAudio: ((event: TtsEvent) => void) | null = null
+    let resolveFinished: ((event: TtsEvent) => void) | null = null
+    const firstAudio = new Promise<TtsEvent>((resolve) => {
+      resolveFirstAudio = resolve
+    })
+    const finished = new Promise<TtsEvent>((resolve) => {
+      resolveFinished = resolve
     })
 
-    yield result
+    const emitFirstAudio = () => {
+      if (firstAudioEmitted) {
+        return
+      }
 
-    if (result.type === 'first-audio') {
-      yield { type: 'end', at: Date.now(), provider: this.kind }
+      firstAudioEmitted = true
+      resolveFirstAudio?.({ type: 'first-audio', at: Date.now(), provider: this.kind })
+    }
+
+    const finish = (event: TtsEvent) => {
+      emitFirstAudio()
+      resolveFinished?.(event)
+    }
+
+    utterance.onstart = () => {
+      emitFirstAudio()
+    }
+    utterance.onend = () => {
+      finish({ type: 'end', at: Date.now(), provider: this.kind })
+    }
+    utterance.onerror = (event) => {
+      finish(errorEvent(this.kind, event.error || 'Speech synthesis failed.'))
+    }
+
+    this.synthesis.speak(utterance)
+
+    yield await firstAudio
+    const finalEvent = await finished
+    if (finalEvent.type !== 'first-audio') {
+      yield finalEvent
     }
   }
 

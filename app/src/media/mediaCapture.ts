@@ -16,6 +16,14 @@ const microphoneConstraints: MediaStreamConstraints = {
   },
 }
 
+const virtualMicrophoneLabelPatterns = [
+  /iriun/i,
+  /todesk/i,
+  /virtual/i,
+  /虚拟/u,
+  /webcam/i,
+]
+
 export const emptyMediaCaptureState = (): MediaCaptureState => ({
   status: 'idle',
   cameraStatus: 'idle',
@@ -30,9 +38,16 @@ export function isMediaCaptureSupported(mediaDevices = navigator.mediaDevices): 
   return typeof mediaDevices?.getUserMedia === 'function'
 }
 
+export interface RequestMediaCaptureOptions {
+  onMicrophoneReady?: (
+    partial: Pick<MediaCaptureState, 'microphoneStatus' | 'microphoneStream'>,
+  ) => void
+}
+
 export async function requestMediaCapture(
   mediaDevices = navigator.mediaDevices,
   consent?: MediaPrivacyConsent,
+  options?: RequestMediaCaptureOptions,
 ): Promise<MediaCaptureState> {
   if (consent && !canStartMediaCapture(consent)) {
     return {
@@ -54,21 +69,35 @@ export async function requestMediaCapture(
     }
   }
 
-  const requests: Array<Promise<MediaStream>> = []
+  const cameraPromise: Promise<PromiseSettledResult<MediaStream>> = !consent || isCameraCaptureAuthorized(consent)
+    ? mediaDevices
+        .getUserMedia(cameraConstraints)
+        .then((value) => ({ status: 'fulfilled' as const, value }))
+        .catch((reason) => ({ status: 'rejected' as const, reason }))
+    : Promise.resolve({
+        status: 'rejected' as const,
+        reason: new DOMException('Camera capture not authorized.', 'NotAllowedError'),
+      })
 
-  if (!consent || isCameraCaptureAuthorized(consent)) {
-    requests.push(mediaDevices.getUserMedia(cameraConstraints))
-  } else {
-    requests.push(Promise.reject(new DOMException('Camera capture not authorized.', 'NotAllowedError')))
+  const microphonePromise: Promise<PromiseSettledResult<MediaStream>> =
+    !consent || isMicrophoneCaptureAuthorized(consent)
+      ? requestMicrophoneStream(mediaDevices)
+      : Promise.resolve({
+          status: 'rejected' as const,
+          reason: new DOMException('Microphone capture not authorized.', 'NotAllowedError'),
+        })
+
+  const microphoneResult = await microphonePromise
+  const earlyMicrophoneStream = getFulfilledStream(microphoneResult)
+  const earlyMicrophoneStatus = getResultStatus(microphoneResult, 'audio')
+  if (earlyMicrophoneStream && earlyMicrophoneStatus === 'ready') {
+    options?.onMicrophoneReady?.({
+      microphoneStatus: earlyMicrophoneStatus,
+      microphoneStream: earlyMicrophoneStream,
+    })
   }
 
-  if (!consent || isMicrophoneCaptureAuthorized(consent)) {
-    requests.push(mediaDevices.getUserMedia(microphoneConstraints))
-  } else {
-    requests.push(Promise.reject(new DOMException('Microphone capture not authorized.', 'NotAllowedError')))
-  }
-
-  const [cameraResult, microphoneResult] = await Promise.allSettled(requests)
+  const cameraResult = await cameraPromise
 
   const cameraStream = getFulfilledStream(cameraResult)
   const microphoneStream = getFulfilledStream(microphoneResult)
@@ -110,6 +139,72 @@ export function stopMediaCapture(state: MediaCaptureState): void {
   state.stream?.getTracks().forEach((track) => track.stop())
 }
 
+async function requestMicrophoneStream(mediaDevices: MediaDevices): Promise<PromiseSettledResult<MediaStream>> {
+  const preferredConstraints = await getPreferredMicrophoneConstraints(mediaDevices)
+  const preferredResult = await getSettledUserMedia(mediaDevices, preferredConstraints)
+  if (preferredResult.status === 'fulfilled' || preferredConstraints === microphoneConstraints) {
+    return preferredResult
+  }
+
+  return getSettledUserMedia(mediaDevices, microphoneConstraints)
+}
+
+async function getPreferredMicrophoneConstraints(mediaDevices: MediaDevices): Promise<MediaStreamConstraints> {
+  if (typeof mediaDevices.enumerateDevices !== 'function') {
+    return microphoneConstraints
+  }
+
+  try {
+    const preferredDevice = (await mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === 'audioinput' && device.deviceId)
+      .sort((left, right) => getMicrophoneDeviceScore(right) - getMicrophoneDeviceScore(left))[0]
+
+    if (!preferredDevice || getMicrophoneDeviceScore(preferredDevice) <= 0) {
+      return microphoneConstraints
+    }
+
+    return {
+      audio: {
+        ...(microphoneConstraints.audio as MediaTrackConstraints),
+        deviceId: { exact: preferredDevice.deviceId },
+      },
+    }
+  } catch {
+    return microphoneConstraints
+  }
+}
+
+function getMicrophoneDeviceScore(device: MediaDeviceInfo): number {
+  const label = device.label.trim()
+  if (!label) {
+    return 0
+  }
+
+  const lowerLabel = label.toLocaleLowerCase()
+  let score = 1
+  if (lowerLabel.includes('microphone') || label.includes('麦克风')) {
+    score += 3
+  }
+  if (lowerLabel.includes('default') || lowerLabel.includes('communications')) {
+    score -= 1
+  }
+  if (virtualMicrophoneLabelPatterns.some((pattern) => pattern.test(label))) {
+    score -= 5
+  }
+
+  return score
+}
+
+function getSettledUserMedia(
+  mediaDevices: MediaDevices,
+  constraints: MediaStreamConstraints,
+): Promise<PromiseSettledResult<MediaStream>> {
+  return mediaDevices
+    .getUserMedia(constraints)
+    .then((value) => ({ status: 'fulfilled' as const, value }))
+    .catch((reason) => ({ status: 'rejected' as const, reason }))
+}
+
 function getTrackStatus(tracks: MediaStreamTrack[]): DeviceStatus {
   if (tracks.length === 0) {
     return 'device-error'
@@ -141,6 +236,10 @@ function getRejectedReason(result: PromiseSettledResult<MediaStream>): unknown {
 
 function getOverallStatus(cameraStatus: DeviceStatus, microphoneStatus: DeviceStatus): MediaStatus {
   if (cameraStatus === 'ready' && microphoneStatus === 'ready') {
+    return 'ready'
+  }
+
+  if (microphoneStatus === 'ready' || cameraStatus === 'ready') {
     return 'ready'
   }
 

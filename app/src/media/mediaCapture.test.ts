@@ -33,8 +33,12 @@ function createTrack(kind: 'audio' | 'video'): MediaStreamTrack {
 
 function createMediaDevices(
   getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>,
+  devices: MediaDeviceInfo[] = [],
 ): MediaDevices {
-  return { getUserMedia } as unknown as MediaDevices
+  return {
+    getUserMedia,
+    enumerateDevices: () => Promise.resolve(devices),
+  } as unknown as MediaDevices
 }
 
 describe('mediaCapture', () => {
@@ -63,6 +67,31 @@ describe('mediaCapture', () => {
     expect(state.stream?.getTracks()).toHaveLength(2)
   })
 
+  it('prefers a physical microphone over virtual camera audio inputs', async () => {
+    const getUserMedia = vi.fn((constraints: MediaStreamConstraints) => {
+      if (constraints.video) {
+        return Promise.resolve(new MockMediaStream([createTrack('video')]) as unknown as MediaStream)
+      }
+
+      return Promise.resolve(new MockMediaStream([createTrack('audio')]) as unknown as MediaStream)
+    })
+    const devices = [
+      { kind: 'audioinput', label: '麦克风 (Iriun Webcam)', deviceId: 'iriun' },
+      { kind: 'audioinput', label: 'Microphone (K02BS)', deviceId: 'physical' },
+    ] as MediaDeviceInfo[]
+
+    const state = await requestMediaCapture(createMediaDevices(getUserMedia, devices))
+
+    expect(state.microphoneStatus).toBe('ready')
+    expect(getUserMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audio: expect.objectContaining({
+          deviceId: { exact: 'physical' },
+        }),
+      }),
+    )
+  })
+
   it('keeps video available when microphone capture fails', async () => {
     const getUserMedia = vi.fn((constraints: MediaStreamConstraints) => {
       if (constraints.video) {
@@ -74,11 +103,29 @@ describe('mediaCapture', () => {
 
     const state = await requestMediaCapture(createMediaDevices(getUserMedia))
 
-    expect(state.status).toBe('device-error')
+    expect(state.status).toBe('ready')
     expect(state.cameraStatus).toBe('ready')
     expect(state.microphoneStatus).toBe('device-error')
     expect(state.cameraStream).not.toBeNull()
     expect(state.errorMessage).toBe('Video preview is available, but voice input is unavailable.')
+  })
+
+  it('keeps voice available when camera capture fails', async () => {
+    const getUserMedia = vi.fn((constraints: MediaStreamConstraints) => {
+      if (constraints.video) {
+        return Promise.reject(new Error('No camera'))
+      }
+
+      return Promise.resolve(new MockMediaStream([createTrack('audio')]) as unknown as MediaStream)
+    })
+
+    const state = await requestMediaCapture(createMediaDevices(getUserMedia))
+
+    expect(state.status).toBe('ready')
+    expect(state.cameraStatus).toBe('device-error')
+    expect(state.microphoneStatus).toBe('ready')
+    expect(state.microphoneStream).not.toBeNull()
+    expect(state.errorMessage).toBe('Voice input is available, but camera preview is unavailable.')
   })
 
   it('returns permission-denied when both requests are denied', async () => {

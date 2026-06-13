@@ -192,6 +192,7 @@ export interface VisualAnswer {
   explanation?: string
   evidenceAvailable: boolean
   requiresSpeech: boolean
+  memoryCandidates?: LongTermMemoryCandidate[]
 }
 
 export interface ActiveVisualEvidence {
@@ -235,6 +236,7 @@ export interface CloudVisualLanguageProvider {
 export interface MultimodalDialogueRequest {
   transcript: string
   frame: SampledVideoFrame | null
+  selectedObjectRegion?: VisionRegion | null
   networkState: NetworkState
   language: AppLanguage
   memory: ConversationMemoryState
@@ -251,6 +253,15 @@ export interface MultimodalDialogueResult {
 }
 
 export type LongTermMemoryType = 'preference' | 'object-location' | 'habit' | 'fact'
+
+export interface LongTermMemoryCandidate {
+  type: LongTermMemoryType
+  summary: string
+  subject?: string
+  value?: string
+  tags?: string[]
+  syncEligible?: boolean
+}
 
 export interface LongTermMemoryRecord {
   id: string
@@ -421,6 +432,7 @@ export type SpeechOutputStatus =
 export type TtsCancellationReason =
   | 'stop-command'
   | 'new-turn'
+  | 'user-interrupt'
   | 'disabled'
   | 'unmount'
   | 'provider-error'
@@ -505,6 +517,55 @@ export interface AsrEvaluationResult {
   correctWords: number
   wordAccuracy: number
   passed: boolean
+}
+
+export type AsrProviderKind = 'cloud-streaming' | 'web-speech' | 'mock'
+
+export type AsrCaptureStatus = 'idle' | 'listening' | 'committing' | 'unavailable' | 'failed'
+
+export interface AsrRequest {
+  turnId: string
+  language: AppLanguage
+}
+
+export type AsrEvent =
+  | { type: 'start'; at: number; provider: AsrProviderKind; turnId: string }
+  | { type: 'interim'; at: number; provider: AsrProviderKind; turnId: string; text: string }
+  | { type: 'final'; at: number; provider: AsrProviderKind; turnId: string; text: string }
+  | { type: 'end'; at: number; provider: AsrProviderKind; turnId: string }
+  | { type: 'error'; at: number; provider: AsrProviderKind; turnId: string; message: string }
+
+export interface AsrProviderCapabilities {
+  kind: AsrProviderKind
+  available: boolean
+  local: boolean
+  supportsInterimResults: boolean
+  supportsLanguage: boolean
+}
+
+export interface AsrProvider {
+  kind: AsrProviderKind
+  getCapabilities: (language: AppLanguage) => AsrProviderCapabilities
+  startSession: (request: AsrRequest, onEvent: (event: AsrEvent) => void) => void
+  stopSession: () => Promise<string>
+  cancel: () => void
+}
+
+export interface AsrCaptureState {
+  status: AsrCaptureStatus
+  provider: AsrProviderKind | null
+  currentTurnId: string | null
+  interimText: string
+  finalText: string
+  errorMessage: string | null
+}
+
+export interface AsrCaptureResult {
+  turnId: string
+  transcript: string
+  committedAt: number
+  speechCaptureStartedAt: number
+  speechCaptureEndedAt: number
 }
 
 export interface TtsNaturalnessEvaluation {

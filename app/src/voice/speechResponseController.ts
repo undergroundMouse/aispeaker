@@ -100,7 +100,13 @@ export class SpeechResponseController {
       language: input.language,
     })) {
       if (this.activeTurnId !== input.turnId) {
-        providerSelection.provider.cancel('new-turn')
+        if (event.type === 'cancel') {
+          events.push(event)
+          state = reduceSpeechState(state, event)
+          applyMetricEvent(metrics, event)
+        } else {
+          providerSelection.provider.cancel('new-turn')
+        }
         break
       }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { formatSpeechCaptureError, getMessages } from '../i18n'
 import { InMemoryOperationsAdmin } from '../admin/operationsAdmin'
 import { emptyConversationMemory } from '../ai/conversationMemory'
 import {
@@ -11,14 +12,20 @@ import {
   teachCustomObject,
 } from '../ai/customObjects'
 import {
+  extractLocalMemoryCandidates,
+  getMemoryCandidatesFromAnswer,
+  parseExplicitMemoryIntent,
+  persistDialogueMemoryCandidates,
+  shouldSkipDialogueMemoryPersistence,
+} from '../ai/dialogueMemory'
+import {
   LocalLongTermMemoryStore,
-  createDefaultLongTermMemory,
   downloadLongTermMemoryExport,
   exportLongTermMemories,
   getLongTermMemoryReviewPrompt,
 } from '../ai/longTermMemory'
 import { createEdgeCloudMetricsSession, recordCloudRoutingOutcome } from '../ai/edgeCloudMetrics'
-import { MockLocalVisionAnalyzer } from '../ai/localVision'
+import { MockLocalVisionAnalyzer, isVisualQuestion } from '../ai/localVision'
 import { MultimodalDialogueService } from '../ai/multimodalDialogue'
 import { createCloudVisualLanguageProvider } from '../ai/createCloudVisualLanguageProvider'
 import {
@@ -32,7 +39,7 @@ import { InMemoryConversationTelemetryStore } from '../gateway/conversationTelem
 import {
   evaluateProactivePromptPolicy,
   loadProactivePromptState,
-  MockProactiveLocalDetector,
+  createProactiveLocalDetector,
   ProactiveObservationHistory,
   ProactiveRulesEngine,
   recordProactivePromptFeedback,
@@ -52,10 +59,13 @@ import {
 import { deriveNetworkState } from '../network/networkState'
 import type {
   AppLanguage,
+  AsrCaptureResult,
+  AsrCaptureState,
   ConversationMemoryState,
   ConversationTelemetryRecord,
   CustomObjectRecord,
   DialogueEvent,
+  DialogueResponseSegment,
   LocalCommandMatch,
   LongTermMemoryConsentSettings,
   LongTermMemoryRecord,
@@ -75,13 +85,21 @@ import type {
   ActiveVisualEvidence,
 } from '../types'
 import { getWatchOnlySamplingMode } from '../watchOnly'
-import { SpeechResponseController, createDialogueSegment } from '../voice/speechResponseController'
+import { SpeechResponseController } from '../voice/speechResponseController'
 import {
   canRouteComplexRequest,
-  getNetworkRetryMessage,
   matchLocalCommand,
+  normalizePhrase,
 } from '../voice/localCommands'
+import {
+  getOfflineCloudMessage,
+  getWeakNetworkCloudMessage,
+} from '../voice/cloudFailureMessages'
+import { detectSystemFailureVariant } from '../surfaces/conversationEntry'
 import { CloudStreamingTtsProvider, WebSpeechTtsProvider } from '../voice/ttsProviders'
+import { MockAsrProvider, WebSpeechAsrProvider, CloudStreamingAsrProvider } from '../voice/asrProviders'
+import { SpeechCaptureController } from '../voice/speechCaptureController'
+import { buildStreamingPreviewSegments } from '../surfaces/assist/buildCaptionTurns'
 
 interface WakeDetector {
   start: (onWake: () => void) => void
@@ -120,6 +138,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     return consent
   })
   const backendConfig = useMemo(() => readBackendClientConfig(), [])
+  const mediaStateRef = useRef<MediaCaptureState>(emptyMediaCaptureState())
   const [cloudProviderSetup] = useState(() =>
     createCloudVisualLanguageProvider(import.meta.env, () => ({
       conversationId: conversationIdRef.current,
@@ -157,7 +176,24 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         new WebSpeechTtsProvider(),
       ]),
   )
-  const [proactiveDetector] = useState(() => new MockProactiveLocalDetector())
+  const preferMockAsr = import.meta.env.MODE === 'test'
+  const [speechCaptureController] = useState(
+    () =>
+      new SpeechCaptureController([
+        new CloudStreamingAsrProvider({
+          getBackendConfig: () => backendConfig,
+          getMicrophoneStream: () => mediaStateRef.current.microphoneStream,
+          isEnabled: () => mediaPrivacyConsentRef.current.microphoneCapture,
+        }),
+        new WebSpeechAsrProvider(),
+        new MockAsrProvider(preferMockAsr ? '你好' : ''),
+      ]),
+  )
+  const lastCaptureRef = useRef<AsrCaptureResult | null>(null)
+  const lastProactiveEvaluationAtRef = useRef(0)
+  const proactivePromptInFlightRef = useRef(false)
+  const PROACTIVE_EVAL_INTERVAL_MS = 5_000
+  const [proactiveDetector] = useState(() => createProactiveLocalDetector())
   const [proactiveRulesEngine] = useState(() => new ProactiveRulesEngine())
   const [proactiveObservationHistory] = useState(() => new ProactiveObservationHistory())
   const [mediaState, setMediaState] = useState<MediaCaptureState>(() => ({
@@ -198,7 +234,9 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   const [conversationMemory, setConversationMemory] = useState<ConversationMemoryState>(() =>
     emptyConversationMemory(),
   )
-  const [feedback, setFeedback] = useState<string>('Initializing media devices...')
+  const [feedback, setFeedback] = useState<string>('')
+  const [dialogueSegments, setDialogueSegments] = useState<DialogueResponseSegment[]>([])
+  const [asrState, setAsrState] = useState<AsrCaptureState>(() => speechCaptureController.getState())
   const [speechState, setSpeechState] = useState<SpeechPlaybackState>({
     status: 'idle',
     provider: null,
@@ -225,10 +263,19 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
 
   const startDialogue = useCallback((trigger: DialogueEvent['trigger']) => {
     const startedAt = Date.now()
+    const turnId = `turn-${startedAt}`
     setLastDialogueAt(startedAt)
     setLastDialogueEvent({ trigger, startedAt })
-    setFeedback(trigger === 'push-to-talk' ? 'Listening...' : 'Wake trigger detected.')
-  }, [])
+    const text = getMessages(language)
+    const listeningText =
+      trigger === 'push-to-talk'
+        ? text.pushToTalkListening
+        : language === 'zh'
+          ? '已检测到唤醒词。'
+          : 'Wake trigger detected.'
+    setFeedback(listeningText)
+    setDialogueSegments(buildStreamingPreviewSegments(turnId, listeningText, false))
+  }, [language])
 
   const refreshLearnedCustomObjects = useCallback(async () => {
     setLearnedCustomObjects(await customObjectStore.list())
@@ -243,21 +290,50 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   useEffect(() => {
     let disposed = false
 
-    requestMediaCapture(undefined, mediaPrivacyConsent).then((state) => {
+    requestMediaCapture(undefined, mediaPrivacyConsent, {
+      onMicrophoneReady: ({ microphoneStatus, microphoneStream }) => {
+        if (disposed) {
+          stopMediaCapture({ ...emptyMediaCaptureState(), microphoneStream })
+          return
+        }
+
+        setMediaState((previous) => {
+          const stream = new MediaStream([
+            ...(previous.cameraStream?.getVideoTracks() ?? []),
+            ...(microphoneStream?.getAudioTracks() ?? []),
+          ])
+          const next = {
+            ...previous,
+            microphoneStatus,
+            microphoneStream,
+            stream,
+            status:
+              microphoneStatus === 'ready' || previous.cameraStatus === 'ready'
+                ? ('ready' as const)
+                : previous.status,
+          }
+          mediaStateRef.current = next
+          return next
+        })
+      },
+    }).then((state) => {
       if (disposed) {
         stopMediaCapture(state)
         return
       }
 
       setMediaState(state)
-      setFeedback(state.errorMessage ?? 'Media devices initialized.')
+      mediaStateRef.current = state
+      setFeedback(state.errorMessage ?? '')
     })
 
     return () => {
       disposed = true
       setMediaState((state) => {
         stopMediaCapture(state)
-        return emptyMediaCaptureState()
+        const emptyState = emptyMediaCaptureState()
+        mediaStateRef.current = emptyState
+        return emptyState
       })
     }
   }, [mediaPrivacyConsent])
@@ -280,17 +356,6 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     let disposed = false
 
     async function initializeLongTermMemory() {
-      const existing = await longTermMemoryStore.list(ACTIVE_USER_ID)
-      if (disposed) {
-        return
-      }
-
-      if (longTermMemoryStore.isAvailable() && existing.length === 0) {
-        for (const memory of createDefaultLongTermMemory(ACTIVE_USER_ID)) {
-          await longTermMemoryStore.create(ACTIVE_USER_ID, memory)
-        }
-      }
-
       if (!disposed) {
         await refreshLongTermMemories()
       }
@@ -327,14 +392,6 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       disposed = true
     }
   }, [language, longTermMemories.length, longTermMemoryStore, refreshLongTermMemories])
-
-  useEffect(() => {
-    if (!videoRef.current) {
-      return
-    }
-
-    videoRef.current.srcObject = mediaState.cameraStream
-  }, [mediaState.cameraStream])
 
   useEffect(() => {
     const updateNetworkState = () => {
@@ -398,14 +455,23 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   }, [mediaState.cameraStatus, samplingMode])
 
   const startPushToTalk = useCallback(() => {
-    if (mediaState.microphoneStatus !== 'ready') {
-      setFeedback('Microphone is unavailable.')
+    if (mediaStateRef.current.microphoneStatus !== 'ready') {
+      setFeedback(getMessages(language).microphoneUnavailable)
       return
     }
 
+    speechController.cancel('user-interrupt')
     setIsPushToTalkActive(true)
     startDialogue('push-to-talk')
-  }, [mediaState.microphoneStatus, startDialogue])
+    const turnId = `turn-${Date.now()}`
+    speechCaptureController.start({ turnId, language, preferMock: preferMockAsr })
+  }, [
+    language,
+    preferMockAsr,
+    speechCaptureController,
+    speechController,
+    startDialogue,
+  ])
 
   const ensureCurrentFrame = useCallback(() => {
     if (lastFrame || mediaState.cameraStatus !== 'ready') {
@@ -429,6 +495,11 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     })
     setFeedback(language === 'zh' ? '已选择画面中央物体区域。' : 'Selected the center object region.')
   }, [ensureCurrentFrame, language])
+
+  const clearSelectedObjectRegion = useCallback(() => {
+    setSelectedObjectRegion(null)
+    setFeedback(language === 'zh' ? '已取消框选。' : 'Selection cleared.')
+  }, [language])
 
   const selectObjectRegionFromPointer = useCallback(
     (clientX: number, clientY: number) => {
@@ -469,16 +540,58 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     [customObjectStore, language, lastCustomObjectMatchId, refreshLearnedCustomObjects],
   )
 
-  const undoLastTeaching = useCallback(async () => {
+  const undoLastTeaching = useCallback(async (): Promise<string> => {
     const deleted = await customObjectStore.deleteLastTeaching()
     await refreshLearnedCustomObjects()
-    setFeedback(
-      getCustomObjectMemoryMessage(language, deleted ? 'undo' : 'none'),
-    )
     if (deleted?.id === lastCustomObjectMatchId) {
       setLastCustomObjectMatchId(null)
     }
+    return getCustomObjectMemoryMessage(language, deleted ? 'undo' : 'none')
   }, [customObjectStore, language, lastCustomObjectMatchId, refreshLearnedCustomObjects])
+
+  const recordDialogueTurn = useCallback(
+    ({
+      transcript,
+      reply,
+      committedAt,
+      trigger = 'push-to-talk',
+    }: {
+      transcript: string
+      reply: string
+      committedAt: number
+      trigger?: DialogueEvent['trigger']
+    }) => {
+      const turnId = `turn-${committedAt}`
+      setFeedback(reply)
+      setDialogueSegments(buildStreamingPreviewSegments(turnId, reply, true))
+      setLastDialogueEvent({
+        trigger,
+        transcript,
+        startedAt: committedAt,
+      })
+    },
+    [],
+  )
+
+  const persistTurnMemories = useCallback(
+    async (transcript: string, answer: VisualAnswer) => {
+      if (shouldSkipDialogueMemoryPersistence({ transcript, answer })) {
+        return
+      }
+
+      const cloudCandidates = getMemoryCandidatesFromAnswer(answer)
+      const localCandidates = extractLocalMemoryCandidates(transcript, language)
+      const candidates = cloudCandidates.length > 0 ? cloudCandidates : localCandidates
+
+      await persistDialogueMemoryCandidates({
+        store: longTermMemoryStore,
+        userId: ACTIVE_USER_ID,
+        candidates,
+      })
+      await refreshLongTermMemories()
+    },
+    [language, longTermMemoryStore, refreshLongTermMemories],
+  )
 
   const deleteLongTermMemory = useCallback(
     async (id: string) => {
@@ -512,11 +625,19 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   }, [])
 
   const setCameraCaptureConsent = useCallback((enabled: boolean) => {
-    setMediaPrivacyConsent((consent) => saveMediaPrivacyConsent({ ...consent, cameraCapture: enabled }))
+    setMediaPrivacyConsent((consent) => {
+      const next = saveMediaPrivacyConsent({ ...consent, cameraCapture: enabled })
+      mediaPrivacyConsentRef.current = next
+      return next
+    })
   }, [])
 
   const setMicrophoneCaptureConsent = useCallback((enabled: boolean) => {
-    setMediaPrivacyConsent((consent) => saveMediaPrivacyConsent({ ...consent, microphoneCapture: enabled }))
+    setMediaPrivacyConsent((consent) => {
+      const next = saveMediaPrivacyConsent({ ...consent, microphoneCapture: enabled })
+      mediaPrivacyConsentRef.current = next
+      return next
+    })
   }, [])
 
   const setCloudMediaTransmissionConsent = useCallback((enabled: boolean) => {
@@ -588,14 +709,12 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   }, [])
 
   const executeLocalCommand = useCallback(
-    async (match: LocalCommandMatch) => {
+    async (match: LocalCommandMatch): Promise<string> => {
       const { command } = match
 
       if (command.action === 'switch-language' && command.targetLanguage) {
         setLanguage(command.targetLanguage)
-        const message = command.targetLanguage === 'zh' ? '已切换到中文。' : 'Switched to English.'
-        setFeedback(message)
-        return
+        return command.targetLanguage === 'zh' ? '已切换到中文。' : 'Switched to English.'
       }
 
       if (command.action === 'stop-dialogue') {
@@ -607,26 +726,22 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
           cancellationReason: 'stop-command',
         }))
         setLastDialogueAt(null)
-        setFeedback(language === 'zh' ? '已停止对话。' : 'Dialogue stopped.')
-        return
+        return language === 'zh' ? '已停止对话。' : 'Dialogue stopped.'
       }
 
       if (command.action === 'disable-proactive-prompts') {
         updateProactivePromptState((state) => setProactivePromptsEnabled(state, false))
-        setFeedback(language === 'zh' ? '已关闭主动提示。' : 'Proactive prompts are off.')
-        return
+        return language === 'zh' ? '已关闭主动提示。' : 'Proactive prompts are off.'
       }
 
       if (command.action === 'increase-proactive-prompts') {
         updateProactivePromptState((state) => setProactiveReminderIntensity(state, 'more'))
-        setFeedback(language === 'zh' ? '我会多提醒你。' : 'I will remind you more.')
-        return
+        return language === 'zh' ? '我会多提醒你。' : 'I will remind you more.'
       }
 
       if (command.action === 'proactive-prompt-wrong') {
         if (!lastProactivePrompt) {
-          setFeedback(language === 'zh' ? '没有可纠正的主动提示。' : 'There is no proactive prompt to correct.')
-          return
+          return language === 'zh' ? '没有可纠正的主动提示。' : 'There is no proactive prompt to correct.'
         }
 
         updateProactivePromptState((state) =>
@@ -636,39 +751,33 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
             labels: lastProactivePrompt.labels,
           }),
         )
-        setFeedback(language === 'zh' ? '收到，我会减少类似提醒。' : 'Got it. I will reduce similar reminders.')
-        return
+        return language === 'zh' ? '收到，我会减少类似提醒。' : 'Got it. I will reduce similar reminders.'
       }
 
       if (command.action === 'forget-custom-object') {
         if (!lastCustomObjectMatchId) {
-          setFeedback(getCustomObjectMemoryMessage(language, 'unresolved'))
-          return
+          return getCustomObjectMemoryMessage(language, 'unresolved')
         }
 
         await customObjectStore.delete(lastCustomObjectMatchId)
         await refreshLearnedCustomObjects()
         setLastCustomObjectMatchId(null)
-        setFeedback(getCustomObjectMemoryMessage(language, 'forgot'))
-        return
+        return getCustomObjectMemoryMessage(language, 'forgot')
       }
 
       if (command.action === 'undo-custom-object-teaching') {
-        await undoLastTeaching()
-        return
+        return undoLastTeaching()
       }
 
       if (command.action === 'take-photo') {
-        setFeedback(language === 'zh' ? '已触发拍照。' : 'Photo capture triggered.')
-        return
+        return language === 'zh' ? '已触发拍照。' : 'Photo capture triggered.'
       }
 
       if (command.action === 'goodbye') {
-        setFeedback(language === 'zh' ? '再见。' : 'Goodbye.')
-        return
+        return language === 'zh' ? '再见。' : 'Goodbye.'
       }
 
-      setFeedback(language === 'zh' ? '你好。' : 'Hello.')
+      return language === 'zh' ? '你好。' : 'Hello.'
     },
     [
       customObjectStore,
@@ -698,13 +807,15 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     }) => {
       const result = await speechController.speakResponse({
         turnId,
-        segments: [createDialogueSegment(turnId, text)],
+        segments: buildStreamingPreviewSegments(turnId, text, true),
         language,
         networkState,
         speechCaptureStartedAt,
         speechCaptureEndedAt,
         transcriptCommittedAt,
       })
+
+      setDialogueSegments(buildStreamingPreviewSegments(turnId, text, true))
 
       setSpeechState(result.state)
       setLatencyMetrics(result.metrics)
@@ -713,7 +824,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   )
 
   const speakProactivePrompt = useCallback(
-    async (prompt: ProactivePromptCandidate) => {
+    async (prompt: ProactivePromptCandidate, options?: { recordSpoken?: boolean }) => {
       const result = await speechController.speakProactivePrompt({
         prompt,
         language,
@@ -723,7 +834,9 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
 
       setLastProactivePrompt(prompt)
       setFeedback(prompt.text)
-      updateProactivePromptState((state) => recordProactivePromptSpoken(state, prompt.promptKey, prompt.createdAt))
+      if (options?.recordSpoken !== false) {
+        updateProactivePromptState((state) => recordProactivePromptSpoken(state, prompt.promptKey, prompt.createdAt))
+      }
 
       if (result.speechResult) {
         setSpeechState(result.speechResult.state)
@@ -740,6 +853,15 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       if (!lastFrame || !proactivePromptState.settings.enabled) {
         return
       }
+
+      const now = Date.now()
+      if (proactivePromptInFlightRef.current) {
+        return
+      }
+      if (now - lastProactiveEvaluationAtRef.current < PROACTIVE_EVAL_INTERVAL_MS) {
+        return
+      }
+      lastProactiveEvaluationAtRef.current = now
 
       const detection = await proactiveDetector.detect(lastFrame)
       if (disposed) {
@@ -768,8 +890,19 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         )
         .find((result) => result.accepted && result.candidate)
 
-      if (accepted?.candidate) {
-        await speakProactivePrompt(accepted.candidate)
+      if (!accepted?.candidate) {
+        return
+      }
+
+      proactivePromptInFlightRef.current = true
+      updateProactivePromptState((state) =>
+        recordProactivePromptSpoken(state, accepted.candidate!.promptKey, accepted.candidate!.createdAt),
+      )
+
+      try {
+        await speakProactivePrompt(accepted.candidate, { recordSpoken: false })
+      } finally {
+        proactivePromptInFlightRef.current = false
       }
     }
 
@@ -837,15 +970,32 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     return () => window.clearTimeout(timer)
   }, [activeVisualEvidence])
 
+  const markCloudRequestFailed = useCallback(() => {
+    setLastCloudRequestFailedAt(Date.now())
+  }, [])
+
   const handleTranscript = useCallback(
     async (transcript: string) => {
-      const transcriptCommittedAt = Date.now()
+      const capture = lastCaptureRef.current
+      const transcriptCommittedAt = capture?.committedAt ?? Date.now()
+      const turnId = `turn-${transcriptCommittedAt}`
+      lastCaptureRef.current = null
       setActiveVisualEvidence(null)
+      setLastDialogueEvent({
+        trigger: 'push-to-talk',
+        transcript,
+        startedAt: transcriptCommittedAt,
+      })
+      const pendingText = language === 'zh' ? '正在处理...' : 'Processing...'
+      setFeedback(pendingText)
+      setDialogueSegments(buildStreamingPreviewSegments(turnId, pendingText, false))
+
       const match = matchLocalCommand(transcript)
 
       if (match) {
         setLastCommand(match)
-        await executeLocalCommand(match)
+        const reply = await executeLocalCommand(match)
+        recordDialogueTurn({ transcript, reply, committedAt: transcriptCommittedAt })
         return
       }
 
@@ -858,7 +1008,11 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
           extractor: customObjectFeatureExtractor,
           language,
         })
-        setFeedback(teaching.message)
+        recordDialogueTurn({
+          transcript,
+          reply: teaching.message,
+          committedAt: transcriptCommittedAt,
+        })
 
         if (teaching.record) {
           setLastCustomObjectMatchId(teaching.record.id)
@@ -868,17 +1022,61 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         return
       }
 
-      if (!canRouteComplexRequest(networkState) && !lastFrame) {
-        setFeedback(getNetworkRetryMessage(language))
+      const explicitMemory = parseExplicitMemoryIntent(transcript, language)
+      if (explicitMemory) {
+        if (!longTermMemoryStore.isAvailable()) {
+          recordDialogueTurn({
+            transcript,
+            reply: getMessages(language).longTermMemoryUnavailable,
+            committedAt: transcriptCommittedAt,
+          })
+          return
+        }
+
+        const memory = await longTermMemoryStore.create(ACTIVE_USER_ID, explicitMemory)
+        setLongTermMemories((memories) => [memory, ...memories.filter((entry) => entry.id !== memory.id)])
+        setLongTermMemoryStatus(longTermMemoryStore.getStatus())
+        void refreshLongTermMemories()
+        recordDialogueTurn({
+          transcript,
+          reply: language === 'zh' ? '已记住。' : 'Remembered.',
+          committedAt: transcriptCommittedAt,
+        })
         return
       }
 
-      setFeedback(language === 'zh' ? '正在分析语音和画面...' : 'Analyzing voice and video...')
+      if (
+        !canRouteComplexRequest(networkState) &&
+        !lastFrame &&
+        isVisualQuestion(normalizePhrase(transcript))
+      ) {
+        const message =
+          networkState === 'offline'
+            ? getOfflineCloudMessage(language)
+            : getWeakNetworkCloudMessage(language)
+        recordDialogueTurn({
+          transcript,
+          reply: message,
+          committedAt: transcriptCommittedAt,
+        })
+        return
+      }
 
-      const turnId = `turn-${transcriptCommittedAt}`
+      const analyzingText =
+        lastFrame || mediaState.cameraStatus === 'ready'
+          ? language === 'zh'
+            ? '正在分析语音和画面...'
+            : 'Analyzing voice and video...'
+          : language === 'zh'
+            ? '正在思考...'
+            : 'Thinking...'
+      setFeedback(analyzingText)
+      setDialogueSegments(buildStreamingPreviewSegments(turnId, analyzingText, false))
+
       const result = await dialogueService.handleTurn({
         transcript,
         frame: lastFrame,
+        selectedObjectRegion,
         networkState,
         language,
         memory: conversationMemory,
@@ -897,21 +1095,22 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       setActiveVisualEvidence(createActiveVisualEvidence(result.answer, transcriptCommittedAt))
       setLastLocalVision(result.localVision)
       setConversationMemory(result.memory)
-      await refreshLongTermMemories()
+      await persistTurnMemories(transcript, result.answer)
       setLastCustomObjectMatchId(
         result.answer.referencedEntities.find((entity) => entity.customObjectId)?.customObjectId ?? null,
       )
-      setLastDialogueEvent({
-        trigger: 'push-to-talk',
-        transcript,
-        startedAt: transcriptCommittedAt,
-      })
       setFeedback(result.answer.answer)
+      setDialogueSegments(buildStreamingPreviewSegments(turnId, result.answer.answer, true))
+      if (result.answer.kind === 'network-error' && detectSystemFailureVariant(result.answer.answer, language) === 'network') {
+        markCloudRequestFailed()
+      }
       if (result.answer.requiresSpeech) {
         await speakFeedback({
           turnId,
           text: buildSpeakableAnswerText(result.answer),
           transcriptCommittedAt,
+          speechCaptureStartedAt: capture?.speechCaptureStartedAt,
+          speechCaptureEndedAt: capture?.speechCaptureEndedAt,
         })
       }
     },
@@ -925,11 +1124,13 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       lastFrame,
       longTermMemoryConsent,
       longTermMemoryStore,
+      markCloudRequestFailed,
       mediaPrivacyConsent,
       mediaState.cameraStatus,
       networkState,
+      persistTurnMemories,
+      recordDialogueTurn,
       refreshConversationTelemetry,
-      refreshLongTermMemories,
       refreshLearnedCustomObjects,
       samplingMode,
       selectedObjectRegion,
@@ -937,17 +1138,25 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     ],
   )
 
-  const stopPushToTalk = useCallback(
-    (transcript: string) => {
-      setIsPushToTalkActive(false)
-      handleTranscript(transcript)
-    },
-    [handleTranscript],
-  )
+  const stopPushToTalk = useCallback(async () => {
+    setIsPushToTalkActive(false)
+    const result = await speechCaptureController.stop()
+    if (!result?.transcript) {
+      const text = getMessages(language)
+      const errorMessage = speechCaptureController.getLastErrorMessage()
+      setFeedback(formatSpeechCaptureError(errorMessage, text))
+      setDialogueSegments([])
+      return
+    }
 
-  const markCloudRequestFailed = useCallback(() => {
-    setLastCloudRequestFailedAt(Date.now())
-  }, [])
+    lastCaptureRef.current = result
+    void handleTranscript(result.transcript)
+  }, [handleTranscript, language, speechCaptureController])
+
+  useEffect(() => {
+    speechCaptureController.setStateListener(setAsrState)
+    return () => speechCaptureController.setStateListener(null)
+  }, [speechCaptureController])
 
   useEffect(() => {
     return () => {
@@ -981,6 +1190,8 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     lastCustomObjectMatchId,
     conversationMemory,
     feedback,
+    dialogueSegments,
+    asrState,
     speechState,
     latencyMetrics,
     mediaPrivacyConsent,
@@ -994,6 +1205,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     stopPushToTalk,
     handleTranscript,
     selectCenteredObjectRegion,
+    clearSelectedObjectRegion,
     selectObjectRegionFromPointer,
     deleteLearnedCustomObject,
     undoLastTeaching,

@@ -1,24 +1,73 @@
-# AISpeaker Web
+# React + TypeScript + Vite
 
-浏览器端多模态 AI 助手前端，本模块实现摄像头实时采集与视频帧 AI 输入管线。
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-## 开发
+Currently, two official plugins are available:
 
-```bash
-npm install
-npm run dev
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+
+```js
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+
+      // Remove tseslint.configs.recommended and replace with this
+      tseslint.configs.recommendedTypeChecked,
+      // Alternatively, use this for stricter rules
+      tseslint.configs.strictTypeChecked,
+      // Optionally, add this for stylistic rules
+      tseslint.configs.stylisticTypeChecked,
+
+      // Other configs...
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
 ```
 
-开发服务器使用 HTTPS（`@vitejs/plugin-basic-ssl`），访问 `https://localhost:5173/` 以使用摄像头 API。
+You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
 
-## 架构
+```js
+// eslint.config.js
+import reactX from 'eslint-plugin-react-x'
+import reactDom from 'eslint-plugin-react-dom'
 
-- `src/core/media/MediaStreamManager` — 摄像头 MediaStream 生命周期
-- `src/core/media/FrameSampler` — 智能抽帧（对话 2fps / 空闲 0.5fps）
-- `src/core/inference/LocalInferenceEngine` — 原始帧消费桩
-- `src/core/cloud/CloudGateway` — 224×224 缩略图消费桩
-- `src/components/CameraPreview` — 实时预览与错误处理 UI
-
-## 隐私
-
-视频帧仅通过内存事件总线传递，不写入 localStorage、IndexedDB 或远程存储。
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+      // Enable lint rules for React
+      reactX.configs['recommended-typescript'],
+      // Enable lint rules for React DOM
+      reactDom.configs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
+```

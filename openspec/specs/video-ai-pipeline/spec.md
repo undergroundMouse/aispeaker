@@ -72,6 +72,20 @@ The system SHALL distribute sampled and preprocessed frames to registered downst
 - **WHEN** a frame is emitted to downstream consumers
 - **THEN** the frame payload includes a monotonically increasing frame index and a capture timestamp
 
+### Requirement: Dialogue prompt context includes relevant local long-term memories
+
+The system SHALL retrieve relevant local long-term memories before cloud-bound visual dialogue turns and include only scoped memory context when the user has authorized cloud memory access.
+
+#### Scenario: Relevant local memories are available before dialogue routing
+
+- **WHEN** a dialogue turn starts and local long-term memories match the current voice, visual, or recent dialogue context
+- **THEN** the AI routing layer prepares a concise local memory context for prompt construction
+
+#### Scenario: Cloud request excludes unauthorized long-term memory
+
+- **WHEN** a dialogue turn requires cloud processing and the user has not explicitly authorized cloud access to long-term memory
+- **THEN** the cloud-bound request excludes long-term memory context
+
 ### Requirement: Video pipeline handles backpressure gracefully
 
 The system SHALL drop or coalesce frames when downstream AI consumers cannot keep pace, prioritizing the most recent frame over backlog accumulation.

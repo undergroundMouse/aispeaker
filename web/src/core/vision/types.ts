@@ -10,10 +10,14 @@ export interface VisionRegion {
   label?: string
 }
 
+export type VisionCandidateSource = 'local-vision' | 'custom-object-memory' | 'cloud'
+
 export interface VisionCandidate {
   label: string
   confidence: number
   region?: VisionRegion
+  source?: VisionCandidateSource
+  customObjectId?: string
 }
 
 export type GestureType = 'raised-hand' | 'nod'
@@ -57,7 +61,7 @@ export type VisualAnswerKind =
   | 'clarification'
   | 'network-error'
 
-export type VisualAnswerSource = 'local' | 'cloud' | 'memory' | 'system'
+export type VisualAnswerSource = 'local' | 'cloud' | 'memory' | 'custom-object-memory' | 'system'
 
 export interface VisualAnswer {
   kind: VisualAnswerKind
@@ -108,4 +112,52 @@ export interface MultimodalDialogueResult {
   answer: VisualAnswer
   localVision: LocalVisionSignals
   memory: ConversationMemoryState
+}
+
+export interface CustomObjectFeatureVector {
+  values: number[]
+  model: string
+  dimensions: number
+}
+
+export interface CustomObjectRegionMetadata extends VisionRegion {
+  frameWidth: number
+  frameHeight: number
+}
+
+export interface CustomObjectRecord {
+  id: string
+  name: string
+  vectors: CustomObjectFeatureVector[]
+  region: CustomObjectRegionMetadata
+  createdAt: number
+  updatedAt: number
+  source: 'voice-region-teaching' | 'remember-prompt'
+}
+
+export interface CustomObjectSearchResult {
+  record: CustomObjectRecord
+  similarity: number
+}
+
+export interface CustomObjectStore {
+  insert(record: Omit<CustomObjectRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<CustomObjectRecord>
+  search(
+    vector: CustomObjectFeatureVector,
+    options?: { threshold?: number; limit?: number },
+  ): Promise<CustomObjectSearchResult[]>
+  list(): Promise<CustomObjectRecord[]>
+  delete(id: string): Promise<boolean>
+  deleteLastTeaching(): Promise<CustomObjectRecord | null>
+  isAvailable(): boolean
+}
+
+export interface CustomObjectFeatureExtractor {
+  model: string
+  isAvailable(): boolean
+  extract(input: {
+    frame: ThumbnailFrame
+    region?: VisionRegion
+    nameHint?: string
+  }): Promise<CustomObjectFeatureVector>
 }

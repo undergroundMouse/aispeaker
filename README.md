@@ -26,7 +26,25 @@ cp server/.env.example server/.env
 cp app/.env.example app/.env.local
 ```
 
-在 `server/.env` 中填入 `QWEN_API_KEY`（WaveSpeed 或兼容 OpenAI 的 Qwen3-VL 密钥）。未配置时云端走 mock，本地功能仍可演示。
+在 `server/.env` 中填入 `QWEN_API_KEY`。**国内推荐**使用 [阿里云百炼 DashScope](https://help.aliyun.com/zh/model-studio/get-api-key)（OpenAI 兼容接口）；也可使用 WaveSpeed 等海外网关。未配置时云端走 mock，本地功能仍可演示。
+
+#### 国内模型（阿里云百炼）
+
+```env
+QWEN_API_KEY=sk-你的百炼密钥
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen-vl-plus
+```
+
+可选视觉模型：`qwen-vl-plus`、`qwen-vl-max`、`qwen3-vl-plus` 等，见[模型列表](https://help.aliyun.com/zh/model-studio/models)。
+
+#### 海外模型（WaveSpeed）
+
+```env
+QWEN_API_KEY=你的 WaveSpeed 密钥
+QWEN_BASE_URL=https://llm.wavespeed.ai/v1
+QWEN_MODEL=qwen/qwen3-vl-8b-thinking
+```
 
 ### 3. 启动后端与前端
 

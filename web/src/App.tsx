@@ -5,6 +5,7 @@ import { getMessages } from './i18n'
 
 function App() {
   const [transcript, setTranscript] = useState('你好')
+  const [showDebugEvidence, setShowDebugEvidence] = useState(false)
   const {
     videoRef,
     mediaState,
@@ -17,7 +18,11 @@ function App() {
     lastDialogueEvent,
     lastFrame,
     lastVisualAnswer,
+    activeVisualEvidence,
     lastLocalVision,
+    proactivePromptState,
+    lastProactivePrompt,
+    proactiveDetectorStatus,
     selectedObjectRegion,
     learnedCustomObjects,
     longTermMemories,
@@ -112,6 +117,14 @@ function App() {
             <div>
               <dt>TTS provider</dt>
               <dd>{speechState.provider ?? 'none'}</dd>
+            </div>
+            <div>
+              <dt>Proactive prompts</dt>
+              <dd>{proactivePromptState.settings.enabled ? 'on' : 'off'}</dd>
+            </div>
+            <div>
+              <dt>Proactive detector</dt>
+              <dd>{proactiveDetectorStatus}</dd>
             </div>
           </dl>
 
@@ -230,6 +243,15 @@ function App() {
             </p>
           </article>
           <article>
+            <h3>Proactive prompts</h3>
+            <p>
+              {`Daily ${proactivePromptState.counters.dailyCount}/${proactivePromptState.settings.dailyCap}, intensity: ${proactivePromptState.settings.reminderIntensity}, storage: ${
+                proactivePromptState.storageAvailable ? 'available' : 'unavailable'
+              }`}
+            </p>
+            <p>{lastProactivePrompt ? `${lastProactivePrompt.source}/${lastProactivePrompt.ruleId}: ${lastProactivePrompt.text}` : 'None'}</p>
+          </article>
+          <article>
             <h3>Memory</h3>
             <p>
               {conversationMemory.entries.length > 0
@@ -268,6 +290,34 @@ function App() {
               </ul>
             ) : (
               <p>No long-term memories stored</p>
+            )}
+          </article>
+          <article>
+            <h3>Visual evidence</h3>
+            <p>
+              {activeVisualEvidence?.evidenceAvailable
+                ? activeVisualEvidence.explanation ?? 'Highlight active on preview.'
+                : 'No active visual evidence'}
+            </p>
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={showDebugEvidence}
+                onChange={(event) => setShowDebugEvidence(event.target.checked)}
+              />
+              <span>Show debug coordinates</span>
+            </label>
+            {showDebugEvidence && (
+              <p>
+                {lastVisualAnswer?.regions.length
+                  ? lastVisualAnswer.regions
+                      .map(
+                        (region) =>
+                          `${region.label ?? 'region'} (${region.x}, ${region.y}, ${region.width}, ${region.height})`,
+                      )
+                      .join(', ')
+                  : 'No regions available'}
+              </p>
             )}
           </article>
           <article>

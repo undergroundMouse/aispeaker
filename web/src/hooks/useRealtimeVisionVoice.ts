@@ -14,8 +14,20 @@ import {
 } from '../ai/longTermMemory'
 import { MockLocalVisionAnalyzer } from '../ai/localVision'
 import { MultimodalDialogueService } from '../ai/multimodalDialogue'
+import {
+  evaluateProactivePromptPolicy,
+  loadProactivePromptState,
+  MockProactiveLocalDetector,
+  ProactiveObservationHistory,
+  ProactiveRulesEngine,
+  recordProactivePromptFeedback,
+  recordProactivePromptSpoken,
+  saveProactivePromptState,
+  setProactivePromptsEnabled,
+  setProactiveReminderIntensity,
+} from '../ai/proactivePrompts'
 import { VideoFrameSampler } from '../ai/videoFrameSampler'
-import { buildSpeakableAnswerText } from '../ai/visualEvidence'
+import { buildSpeakableAnswerText, createActiveVisualEvidence, isVisualEvidenceExpired } from '../ai/visualEvidence'
 import { emptyMediaCaptureState, requestMediaCapture, stopMediaCapture } from '../media/mediaCapture'
 import { deriveNetworkState } from '../network/networkState'
 import type {
@@ -30,12 +42,15 @@ import type {
   LocalVisionSignals,
   MediaCaptureState,
   NetworkState,
+  ProactivePromptCandidate,
+  ProactivePromptState,
   SampledVideoFrame,
   SamplingMode,
   SpeechPlaybackState,
   VisualAnswer,
   VoiceLatencyMetrics,
   VisionRegion,
+  ActiveVisualEvidence,
 } from '../types'
 import { getWatchOnlySamplingMode } from '../watchOnly'
 import { SpeechResponseController, createDialogueSegment } from '../voice/speechResponseController'
@@ -78,6 +93,9 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         new WebSpeechTtsProvider(),
       ]),
   )
+  const [proactiveDetector] = useState(() => new MockProactiveLocalDetector())
+  const [proactiveRulesEngine] = useState(() => new ProactiveRulesEngine())
+  const [proactiveObservationHistory] = useState(() => new ProactiveObservationHistory())
   const [mediaState, setMediaState] = useState<MediaCaptureState>(() => ({
     ...emptyMediaCaptureState(),
     status: 'initializing',
@@ -93,7 +111,13 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   const [lastDialogueEvent, setLastDialogueEvent] = useState<DialogueEvent | null>(null)
   const [lastFrame, setLastFrame] = useState<SampledVideoFrame | null>(null)
   const [lastVisualAnswer, setLastVisualAnswer] = useState<VisualAnswer | null>(null)
+  const [activeVisualEvidence, setActiveVisualEvidence] = useState<ActiveVisualEvidence | null>(null)
   const [lastLocalVision, setLastLocalVision] = useState<LocalVisionSignals | null>(null)
+  const [proactivePromptState, setProactivePromptState] = useState<ProactivePromptState>(() =>
+    loadProactivePromptState(),
+  )
+  const [lastProactivePrompt, setLastProactivePrompt] = useState<ProactivePromptCandidate | null>(null)
+  const [proactiveDetectorStatus, setProactiveDetectorStatus] = useState(() => proactiveDetector.getStatus())
   const [selectedObjectRegion, setSelectedObjectRegion] = useState<VisionRegion | null>(null)
   const [learnedCustomObjects, setLearnedCustomObjects] = useState<CustomObjectRecord[]>([])
   const [longTermMemories, setLongTermMemories] = useState<LongTermMemoryRecord[]>([])
@@ -413,6 +437,10 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     setLongTermMemoryConsent((consent) => ({ ...consent, cloudSummarySync: enabled }))
   }, [])
 
+  const updateProactivePromptState = useCallback((updater: (state: ProactivePromptState) => ProactivePromptState) => {
+    setProactivePromptState((state) => saveProactivePromptState(updater(state)))
+  }, [])
+
   const executeLocalCommand = useCallback(
     async (match: LocalCommandMatch) => {
       const { command } = match
@@ -426,6 +454,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
 
       if (command.action === 'stop-dialogue') {
         speechController.cancel('stop-command')
+        setActiveVisualEvidence(null)
         setSpeechState((state) => ({
           ...state,
           status: 'cancelled',
@@ -433,6 +462,35 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         }))
         setLastDialogueAt(null)
         setFeedback(language === 'zh' ? '已停止对话。' : 'Dialogue stopped.')
+        return
+      }
+
+      if (command.action === 'disable-proactive-prompts') {
+        updateProactivePromptState((state) => setProactivePromptsEnabled(state, false))
+        setFeedback(language === 'zh' ? '已关闭主动提示。' : 'Proactive prompts are off.')
+        return
+      }
+
+      if (command.action === 'increase-proactive-prompts') {
+        updateProactivePromptState((state) => setProactiveReminderIntensity(state, 'more'))
+        setFeedback(language === 'zh' ? '我会多提醒你。' : 'I will remind you more.')
+        return
+      }
+
+      if (command.action === 'proactive-prompt-wrong') {
+        if (!lastProactivePrompt) {
+          setFeedback(language === 'zh' ? '没有可纠正的主动提示。' : 'There is no proactive prompt to correct.')
+          return
+        }
+
+        updateProactivePromptState((state) =>
+          recordProactivePromptFeedback(state, {
+            ruleId: lastProactivePrompt.ruleId,
+            promptKey: lastProactivePrompt.promptKey,
+            labels: lastProactivePrompt.labels,
+          }),
+        )
+        setFeedback(language === 'zh' ? '收到，我会减少类似提醒。' : 'Got it. I will reduce similar reminders.')
         return
       }
 
@@ -470,8 +528,10 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       customObjectStore,
       language,
       lastCustomObjectMatchId,
+      lastProactivePrompt,
       refreshLearnedCustomObjects,
       speechController,
+      updateProactivePromptState,
       undoLastTeaching,
     ],
   )
@@ -506,9 +566,135 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     [language, networkState, speechController],
   )
 
+  const speakProactivePrompt = useCallback(
+    async (prompt: ProactivePromptCandidate) => {
+      const result = await speechController.speakProactivePrompt({
+        prompt,
+        language,
+        networkState,
+        userSpeaking: isPushToTalkActive,
+      })
+
+      setLastProactivePrompt(prompt)
+      setFeedback(prompt.text)
+      updateProactivePromptState((state) => recordProactivePromptSpoken(state, prompt.promptKey, prompt.createdAt))
+
+      if (result.speechResult) {
+        setSpeechState(result.speechResult.state)
+        setLatencyMetrics(result.speechResult.metrics)
+      }
+    },
+    [isPushToTalkActive, language, networkState, speechController, updateProactivePromptState],
+  )
+
+  useEffect(() => {
+    let disposed = false
+
+    async function evaluateProactivePrompt() {
+      if (!lastFrame || !proactivePromptState.settings.enabled) {
+        return
+      }
+
+      const detection = await proactiveDetector.detect(lastFrame)
+      if (disposed) {
+        return
+      }
+
+      setProactiveDetectorStatus(detection.status)
+      proactiveObservationHistory.add(detection)
+
+      const matches = proactiveRulesEngine.evaluate({
+        detection,
+        history: proactiveObservationHistory,
+        language,
+        now: detection.capturedAt,
+        state: proactivePromptState,
+      })
+
+      const accepted = matches
+        .map((match) =>
+          evaluateProactivePromptPolicy({
+            match,
+            state: proactivePromptState,
+            now: detection.capturedAt,
+            userSpeaking: isPushToTalkActive,
+          }),
+        )
+        .find((result) => result.accepted && result.candidate)
+
+      if (accepted?.candidate) {
+        await speakProactivePrompt(accepted.candidate)
+      }
+    }
+
+    evaluateProactivePrompt()
+
+    return () => {
+      disposed = true
+    }
+  }, [
+    isPushToTalkActive,
+    language,
+    lastFrame,
+    proactiveDetector,
+    proactiveObservationHistory,
+    proactivePromptState,
+    proactiveRulesEngine,
+    speakProactivePrompt,
+  ])
+
+  useEffect(() => {
+    if (isPushToTalkActive || speechController.getQueuedProactivePromptCount() === 0) {
+      return
+    }
+
+    let disposed = false
+    speechController
+      .flushProactivePromptQueue({
+        language,
+        networkState,
+      })
+      .then((results) => {
+        if (disposed) {
+          return
+        }
+
+        const latest = results[results.length - 1]
+        if (latest?.speechResult) {
+          setSpeechState(latest.speechResult.state)
+          setLatencyMetrics(latest.speechResult.metrics)
+        }
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [isPushToTalkActive, language, networkState, speechController])
+
+  useEffect(() => {
+    if (!activeVisualEvidence) {
+      return
+    }
+
+    const remaining = activeVisualEvidence.expiresAt - Date.now()
+    if (remaining <= 0) {
+      setActiveVisualEvidence(null)
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setActiveVisualEvidence((current) =>
+        current && isVisualEvidenceExpired(current) ? null : current,
+      )
+    }, remaining)
+
+    return () => window.clearTimeout(timer)
+  }, [activeVisualEvidence])
+
   const handleTranscript = useCallback(
     async (transcript: string) => {
       const transcriptCommittedAt = Date.now()
+      setActiveVisualEvidence(null)
       const match = matchLocalCommand(transcript)
 
       if (match) {
@@ -558,6 +744,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       })
 
       setLastVisualAnswer(result.answer)
+      setActiveVisualEvidence(createActiveVisualEvidence(result.answer, transcriptCommittedAt))
       setLastLocalVision(result.localVision)
       setConversationMemory(result.memory)
       await refreshLongTermMemories()
@@ -628,7 +815,11 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     lastDialogueEvent,
     lastFrame,
     lastVisualAnswer,
+    activeVisualEvidence,
     lastLocalVision,
+    proactivePromptState,
+    lastProactivePrompt,
+    proactiveDetectorStatus,
     selectedObjectRegion,
     learnedCustomObjects,
     longTermMemories,

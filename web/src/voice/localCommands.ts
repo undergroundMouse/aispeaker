@@ -38,6 +38,24 @@ export const localCommands: LocalCommand[] = [
     requiresNetwork: false,
   },
   {
+    id: 'disable-proactive-prompts',
+    action: 'disable-proactive-prompts',
+    phrases: ['闭嘴别主动说话', '闭嘴，别主动说话', '别主动说话', 'stop proactive prompts'],
+    requiresNetwork: false,
+  },
+  {
+    id: 'increase-proactive-prompts',
+    action: 'increase-proactive-prompts',
+    phrases: ['多提醒我', '多提醒提醒我', 'remind me more'],
+    requiresNetwork: false,
+  },
+  {
+    id: 'proactive-prompt-wrong',
+    action: 'proactive-prompt-wrong',
+    phrases: ['错了', '你说错了', 'wrong', 'that was wrong'],
+    requiresNetwork: false,
+  },
+  {
     id: 'switch-english',
     action: 'switch-language',
     language: 'en',

@@ -19,6 +19,9 @@ describe('localCommands', () => {
     expect(matchLocalCommand('切换到中文')?.command.targetLanguage).toBe('zh')
     expect(matchLocalCommand('忘记那个物体')?.command.action).toBe('forget-custom-object')
     expect(matchLocalCommand('undo last teaching')?.command.action).toBe('undo-custom-object-teaching')
+    expect(matchLocalCommand('闭嘴，别主动说话')?.command.action).toBe('disable-proactive-prompts')
+    expect(matchLocalCommand('多提醒我')?.command.action).toBe('increase-proactive-prompts')
+    expect(matchLocalCommand('错了')?.command.action).toBe('proactive-prompt-wrong')
   })
 
   it('does not match unconfigured phrases', () => {

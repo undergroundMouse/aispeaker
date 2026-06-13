@@ -2,6 +2,7 @@ import type {
   AppLanguage,
   DialogueResponseSegment,
   NetworkState,
+  ProactivePromptCandidate,
   SpeechPlaybackState,
   SpeechResponseResult,
   TtsCancellationReason,
@@ -22,10 +23,24 @@ export interface SpeakResponseInput {
   preferCloudTts?: boolean
 }
 
+export interface SpeakProactivePromptInput {
+  prompt: ProactivePromptCandidate
+  language: AppLanguage
+  networkState: NetworkState
+  userSpeaking?: boolean
+}
+
+export interface ProactivePromptQueueResult {
+  status: 'queued' | 'spoken' | 'interrupted'
+  prompt: ProactivePromptCandidate
+  speechResult?: SpeechResponseResult
+}
+
 export class SpeechResponseController {
   private activeTurnId: string | null = null
   private activeProvider: TtsProvider | null = null
   private readonly providers: TtsProvider[]
+  private readonly proactiveQueue: ProactivePromptCandidate[] = []
 
   constructor(providers: TtsProvider[]) {
     this.providers = providers
@@ -105,6 +120,59 @@ export class SpeechResponseController {
   cancel(reason: TtsCancellationReason): void {
     this.activeProvider?.cancel(reason)
     this.activeTurnId = null
+  }
+
+  async speakProactivePrompt(input: SpeakProactivePromptInput): Promise<ProactivePromptQueueResult> {
+    if (input.userSpeaking && input.prompt.priority !== 'urgent') {
+      this.proactiveQueue.push(input.prompt)
+      return { status: 'queued', prompt: input.prompt }
+    }
+
+    if (input.prompt.priority === 'urgent') {
+      this.cancel('urgent-proactive-prompt')
+    }
+
+    const speechResult = await this.speakResponse({
+      turnId: input.prompt.id,
+      segments: [createDialogueSegment(input.prompt.id, input.prompt.text)],
+      language: input.language,
+      networkState: input.networkState,
+      transcriptCommittedAt: input.prompt.createdAt,
+    })
+
+    return {
+      status: input.prompt.priority === 'urgent' ? 'interrupted' : 'spoken',
+      prompt: input.prompt,
+      speechResult,
+    }
+  }
+
+  async flushProactivePromptQueue({
+    language,
+    networkState,
+  }: {
+    language: AppLanguage
+    networkState: NetworkState
+  }): Promise<ProactivePromptQueueResult[]> {
+    const prompts = this.proactiveQueue.splice(0)
+    const results: ProactivePromptQueueResult[] = []
+
+    for (const prompt of prompts) {
+      results.push(
+        await this.speakProactivePrompt({
+          prompt,
+          language,
+          networkState,
+          userSpeaking: false,
+        }),
+      )
+    }
+
+    return results
+  }
+
+  getQueuedProactivePromptCount(): number {
+    return this.proactiveQueue.length
   }
 }
 

@@ -184,4 +184,63 @@ describe('App', () => {
 
     expect(screen.getByText(/cloud access: authorized, summary sync: on/)).toBeTruthy()
   })
+
+  it('restores proactive prompt state and handles proactive voice controls', async () => {
+    localStorage.setItem(
+      'proactive-prompt-state-v1',
+      JSON.stringify({
+        settings: {
+          enabled: false,
+          reminderIntensity: 'normal',
+          dailyCap: 12,
+        },
+        counters: {
+          date: new Date().toISOString().slice(0, 10),
+          dailyCount: 3,
+          sessionStartedAt: Date.now(),
+          spokenAt: [],
+          lastPromptAtByKey: {},
+        },
+        feedback: [],
+      }),
+    )
+
+    render(<App />)
+
+    expect(await screen.findByText('off')).toBeTruthy()
+    expect(screen.getByText(/Daily 3\/12, intensity: normal/)).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Voice transcript simulator'), {
+      target: { value: '多提醒我' },
+    })
+    fireEvent.click(screen.getByText('Process transcript'))
+
+    expect(await screen.findByText('我会多提醒你。')).toBeTruthy()
+    expect(screen.getByText(/Daily 3\/40, intensity: more/)).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Voice transcript simulator'), {
+      target: { value: '闭嘴，别主动说话' },
+    })
+    fireEvent.click(screen.getByText('Process transcript'))
+
+    expect(await screen.findByText('已关闭主动提示。')).toBeTruthy()
+    expect(screen.getByText('off')).toBeTruthy()
+  })
+
+  it('keeps dialogue processing available when proactive prompts are disabled', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('Voice transcript simulator'), {
+      target: { value: '闭嘴，别主动说话' },
+    })
+    fireEvent.click(screen.getByText('Process transcript'))
+    expect(await screen.findByText('已关闭主动提示。')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Voice transcript simulator'), {
+      target: { value: 'tell me what is in the room' },
+    })
+    fireEvent.click(screen.getByText('Process transcript'))
+
+    expect(await screen.findByText(/cloud\/general/)).toBeTruthy()
+  })
 })

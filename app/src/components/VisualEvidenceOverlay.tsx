@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { VisionRegion } from '../types'
 
 interface VisualEvidenceOverlayProps {
@@ -9,6 +9,33 @@ interface VisualEvidenceOverlayProps {
 export function VisualEvidenceOverlay({ regions, visible }: VisualEvidenceOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const [opacity, setOpacity] = useState(0)
+  const previousSignatureRef = useRef('')
+
+  useEffect(() => {
+    const signature = regions.map((region) => `${region.x},${region.y},${region.width},${region.height}`).join('|')
+    if (visible && regions.length > 0 && signature !== previousSignatureRef.current) {
+      previousSignatureRef.current = signature
+      setOpacity(0)
+      const start = performance.now()
+      const duration = 280
+
+      const animate = (now: number) => {
+        const progress = Math.min(1, (now - start) / duration)
+        setOpacity(progress)
+        if (progress < 1) {
+          requestAnimationFrame(animate)
+        }
+      }
+
+      requestAnimationFrame(animate)
+    }
+
+    if (!visible || regions.length === 0) {
+      previousSignatureRef.current = ''
+      setOpacity(0)
+    }
+  }, [regions, visible])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -36,6 +63,7 @@ export function VisualEvidenceOverlay({ regions, visible }: VisualEvidenceOverla
       canvas.style.height = `${height}px`
       context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
       context.clearRect(0, 0, width, height)
+      context.globalAlpha = opacity
 
       for (const region of regions) {
         const x = region.x * width
@@ -56,6 +84,8 @@ export function VisualEvidenceOverlay({ regions, visible }: VisualEvidenceOverla
           context.fillText(region.label, x + 8, Math.max(18, y + 18))
         }
       }
+
+      context.globalAlpha = 1
     }
 
     draw()
@@ -63,7 +93,7 @@ export function VisualEvidenceOverlay({ regions, visible }: VisualEvidenceOverla
     const observer = new ResizeObserver(draw)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [regions, visible])
+  }, [opacity, regions, visible])
 
   if (!visible || regions.length === 0) {
     return null

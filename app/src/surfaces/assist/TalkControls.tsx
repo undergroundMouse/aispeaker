@@ -3,39 +3,31 @@ import { getMessages } from '../../i18n'
 
 export interface TalkControlsProps {
   language: AppLanguage
-  isPushToTalkActive: boolean
-  microphoneReady: boolean
   hasSelectedRegion: boolean
-  onStartPushToTalk: () => void
-  onStopPushToTalk: () => void
   onSelectCenteredObject: () => void
+  onClearSelectedObject: () => void
 }
 
 export function TalkControls({
   language,
-  isPushToTalkActive,
-  microphoneReady,
   hasSelectedRegion,
-  onStartPushToTalk,
-  onStopPushToTalk,
   onSelectCenteredObject,
+  onClearSelectedObject,
 }: TalkControlsProps) {
   const text = getMessages(language)
 
   return (
     <div className="talk-controls">
-      <button
-        type="button"
-        className="talk-controls__primary"
-        onMouseDown={onStartPushToTalk}
-        onMouseUp={onStopPushToTalk}
-        disabled={!microphoneReady}
-      >
-        {isPushToTalkActive ? text.stopPushToTalk : text.startPushToTalk}
-      </button>
-      <button type="button" className="talk-controls__secondary" onClick={onSelectCenteredObject}>
-        {text.selectCenterObject}
-      </button>
+      <div className="talk-controls__actions">
+        <button type="button" className="talk-controls__secondary" onClick={onSelectCenteredObject}>
+          {text.selectCenterObject}
+        </button>
+        {hasSelectedRegion && (
+          <button type="button" className="talk-controls__clear" onClick={onClearSelectedObject}>
+            {text.clearSelectedObject}
+          </button>
+        )}
+      </div>
       {!hasSelectedRegion && <p className="talk-controls__hint">{text.teachingHint}</p>}
     </div>
   )

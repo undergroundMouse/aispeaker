@@ -1,10 +1,16 @@
 import { readBackendClientConfig } from '../ai/backendClient'
 
-export type AppRoute = 'assist' | 'admin'
+export type AppRoute = 'assist' | 'memory' | 'admin'
 
 export function readAppRoute(pathname = window.location.pathname): AppRoute {
   const normalized = pathname.replace(/\/$/, '') || '/'
-  return normalized === '/admin' ? 'admin' : 'assist'
+  if (normalized === '/admin') {
+    return 'admin'
+  }
+  if (normalized === '/memory') {
+    return 'memory'
+  }
+  return 'assist'
 }
 
 export function isOperatorAvailable(
@@ -13,19 +19,8 @@ export function isOperatorAvailable(
   return readBackendClientConfig(env) !== null
 }
 
-export function isDebugMode(
-  env: Record<string, string | boolean | undefined> = import.meta.env,
-  search = window.location.search,
-): boolean {
-  if (env.DEV) {
-    return true
-  }
-
-  return new URLSearchParams(search).has('debug')
-}
-
 export function navigateToRoute(route: AppRoute): void {
-  const path = route === 'admin' ? '/admin' : '/'
+  const path = route === 'admin' ? '/admin' : route === 'memory' ? '/memory' : '/'
   window.history.pushState({}, '', path)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }

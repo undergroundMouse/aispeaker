@@ -1,8 +1,21 @@
 import type { AppLanguage, ConversationTelemetryRecord } from '../../types'
-import { getMessages } from '../../i18n'
+import { getMessages, type SurfaceMessages } from '../../i18n'
+
+function cloudProviderLabel(kind: string, text: SurfaceMessages): string {
+  if (kind === 'backend') {
+    return text.cloudBackend
+  }
+
+  if (kind === 'qwen') {
+    return text.cloudQwen
+  }
+
+  return text.cloudMock
+}
 
 export interface OperatorDashboardProps {
   language: AppLanguage
+  cloudProviderKind: string
   dailySpend: number
   cloudReductionPercent: number
   conversationTelemetry: ConversationTelemetryRecord[]
@@ -13,6 +26,7 @@ export interface OperatorDashboardProps {
 
 export function OperatorDashboard({
   language,
+  cloudProviderKind,
   dailySpend,
   cloudReductionPercent,
   conversationTelemetry,
@@ -39,6 +53,9 @@ export function OperatorDashboard({
 
         <article className="operator-card">
           <h2>{text.operatorOverview}</h2>
+          <p>
+            {text.statusCloud}: {cloudProviderLabel(cloudProviderKind, text)}
+          </p>
           <p>
             {text.dailySpend}: ${dailySpend.toFixed(4)} | {text.cloudReduction}: {cloudReductionPercent}%
           </p>

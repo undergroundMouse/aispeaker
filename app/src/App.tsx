@@ -1,23 +1,21 @@
 import './App.css'
 import { useMemo, useState } from 'react'
 import { useRealtimeVisionVoice } from './hooks/useRealtimeVisionVoice'
-import { getMessages } from './i18n'
 import { AssistShell } from './surfaces/assist/AssistShell'
-import { buildConversationEntries } from './surfaces/conversationEntry'
-import { DebugPanel } from './surfaces/debug/DebugPanel'
+import { detectCameraInteractionFeedback } from './surfaces/assist/detectCameraInteractionFeedback'
+import { useAssistPresentation } from './surfaces/assist/useAssistPresentation'
+import { MemoryPage } from './surfaces/memory/MemoryPage'
 import { OperatorDashboard } from './surfaces/operator/OperatorDashboard'
-import { isDebugMode, isOperatorAvailable, navigateToRoute } from './surfaces/routing'
-import { SettingsDrawer } from './surfaces/settings/SettingsDrawer'
+import { isOperatorAvailable, navigateToRoute } from './surfaces/routing'
+import { SettingsDrawer, type SettingsFocusSection } from './surfaces/settings/SettingsDrawer'
 import { useAppRoute } from './surfaces/useAppRoute'
 
 function App() {
-  const [transcript, setTranscript] = useState('你好')
+  const [chatInputText, setChatInputText] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [showDebugEvidence, setShowDebugEvidence] = useState(false)
-  const [debugExpanded, setDebugExpanded] = useState(false)
+  const [settingsFocusSection, setSettingsFocusSection] = useState<SettingsFocusSection>(null)
   const route = useAppRoute()
   const operatorAvailable = isOperatorAvailable()
-  const debugEnabled = isDebugMode()
 
   const {
     videoRef,
@@ -25,35 +23,29 @@ function App() {
     language,
     networkState,
     watchOnly,
-    samplingMode,
     isPushToTalkActive,
-    lastCommand,
-    lastDialogueEvent,
-    lastFrame,
     lastVisualAnswer,
+    lastDialogueEvent,
     activeVisualEvidence,
-    lastLocalVision,
-    proactivePromptState,
     lastProactivePrompt,
-    proactiveDetectorStatus,
     selectedObjectRegion,
     learnedCustomObjects,
     longTermMemories,
     staleLongTermMemories,
     longTermMemoryStatus,
     longTermMemoryConsent,
-    conversationMemory,
     feedback,
+    dialogueSegments,
+    asrState,
     speechState,
-    latencyMetrics,
     setWatchOnly,
     startPushToTalk,
     stopPushToTalk,
     handleTranscript,
     selectCenteredObjectRegion,
+    clearSelectedObjectRegion,
     selectObjectRegionFromPointer,
     deleteLearnedCustomObject,
-    undoLastTeaching,
     deleteLongTermMemory,
     forgetAllLongTermMemories,
     setCloudMemoryAccess,
@@ -69,38 +61,60 @@ function App() {
     exportLongTermMemoriesToFile,
     exportCustomObjectsToFile,
     getDailySpend,
-    markCloudRequestFailed,
   } = useRealtimeVisionVoice()
 
-  const text = useMemo(() => getMessages(language), [language])
-
-  const conversationEntries = useMemo(
-    () =>
-      buildConversationEntries({
-        feedback,
-        lastVisualAnswer,
-        lastProactivePrompt,
-        lastDialogueEvent,
-        language,
-      }),
-    [feedback, lastDialogueEvent, lastProactivePrompt, lastVisualAnswer, language],
-  )
-
-  const assistWarnings = useMemo(() => {
-    const warnings: string[] = []
+  const memoryBadgeCount = useMemo(() => {
+    let count = 0
     if (!longTermMemoryStatus.available) {
-      warnings.push(longTermMemoryStatus.message ?? text.longTermMemoryUnavailable)
+      count += 1
     }
     if (staleLongTermMemories.length > 0) {
-      warnings.push(text.staleMemoryWarning(staleLongTermMemories.length))
+      count += 1
     }
-    return warnings
-  }, [longTermMemoryStatus, staleLongTermMemories.length, text])
+    return count
+  }, [longTermMemoryStatus.available, staleLongTermMemories.length])
+
+  const { captionTurns, proactiveBanner, systemToast, dismissSystemToast } = useAssistPresentation({
+    dialogueSegments,
+    feedback,
+    lastVisualAnswer,
+    lastDialogueEvent,
+    lastProactivePrompt,
+    isPushToTalkActive,
+    speechState,
+    language,
+  })
+
+  const interactionFeedback = useMemo(
+    () => detectCameraInteractionFeedback(feedback, language),
+    [feedback, language],
+  )
+
+  const submitChatInput = () => {
+    const trimmed = chatInputText.trim()
+    if (!trimmed) {
+      return
+    }
+
+    void handleTranscript(trimmed)
+    setChatInputText('')
+  }
+
+  const openSettings = (focusSection: SettingsFocusSection = null) => {
+    setSettingsFocusSection(focusSection)
+    setSettingsOpen(true)
+  }
+
+  const closeSettings = () => {
+    setSettingsOpen(false)
+    setSettingsFocusSection(null)
+  }
 
   if (route === 'admin' && operatorAvailable) {
     return (
       <OperatorDashboard
         language={language}
+        cloudProviderKind={cloudProviderKind}
         dailySpend={getDailySpend()}
         cloudReductionPercent={Math.round((1 - edgeCloudMetrics.cloudInvocations / 10) * 100)}
         conversationTelemetry={conversationTelemetry}
@@ -111,95 +125,80 @@ function App() {
     )
   }
 
-  return (
-    <main className="app-shell">
-      <AssistShell
+  if (route === 'memory') {
+    return (
+      <MemoryPage
         language={language}
-        videoRef={videoRef}
-        cameraStatus={mediaState.cameraStatus}
-        microphoneStatus={mediaState.microphoneStatus}
-        networkState={networkState}
-        cloudProviderKind={cloudProviderKind}
-        proactiveEnabled={proactivePromptState.settings.enabled}
-        speechStatus={speechState.status}
-        operatorAvailable={operatorAvailable}
-        activeVisualEvidence={activeVisualEvidence}
-        selectedObjectRegion={selectedObjectRegion}
-        conversationEntries={conversationEntries}
-        isPushToTalkActive={isPushToTalkActive}
-        warnings={assistWarnings}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenOperator={() => navigateToRoute('admin')}
-        onSelectFromPointer={selectObjectRegionFromPointer}
-        onStartPushToTalk={startPushToTalk}
-        onStopPushToTalk={() => stopPushToTalk(transcript)}
-        onSelectCenteredObject={selectCenteredObjectRegion}
+        learnedCustomObjects={learnedCustomObjects}
+        longTermMemories={longTermMemories}
+        longTermMemoryStatus={longTermMemoryStatus}
+        longTermMemoryConsent={longTermMemoryConsent}
+        staleLongTermCount={staleLongTermMemories.length}
+        onBack={() => navigateToRoute('assist')}
+        onDeleteCustomObject={deleteLearnedCustomObject}
+        onExportCustomObjects={exportCustomObjectsToFile}
+        onDeleteLongTermMemory={deleteLongTermMemory}
+        onForgetAllLongTermMemories={forgetAllLongTermMemories}
+        onExportLongTermMemories={exportLongTermMemoriesToFile}
       />
+    )
+  }
+
+  return (
+    <>
+      <main className="app-shell app-shell--assist">
+        <AssistShell
+          language={language}
+          videoRef={videoRef}
+          cameraStream={mediaState.cameraStream}
+          cameraStatus={mediaState.cameraStatus}
+          mediaStatus={mediaState.status}
+          microphoneStatus={mediaState.microphoneStatus}
+          networkState={networkState}
+          speechStatus={speechState.status}
+          asrState={asrState}
+          activeVisualEvidence={activeVisualEvidence}
+          selectedObjectRegion={selectedObjectRegion}
+          captionTurns={captionTurns}
+          proactiveBanner={proactiveBanner}
+          systemToast={systemToast}
+          memoryBadgeCount={memoryBadgeCount}
+          interactionFeedback={interactionFeedback}
+          isPushToTalkActive={isPushToTalkActive}
+          chatInputText={chatInputText}
+          onChatInputChange={setChatInputText}
+          onChatInputSubmit={submitChatInput}
+          onDismissSystemToast={dismissSystemToast}
+          onOpenMemory={() => navigateToRoute('memory')}
+          onOpenSettings={() => openSettings()}
+          onOpenPrivacySettings={() => openSettings('privacy')}
+          onSelectFromPointer={selectObjectRegionFromPointer}
+          onStartPushToTalk={startPushToTalk}
+          onStopPushToTalk={() => void stopPushToTalk()}
+          onSelectCenteredObject={selectCenteredObjectRegion}
+          onClearSelectedObject={clearSelectedObjectRegion}
+        />
+      </main>
 
       {settingsOpen && (
         <SettingsDrawer
           language={language}
           watchOnly={watchOnly}
+          cameraStatus={mediaState.cameraStatus}
+          microphoneStatus={mediaState.microphoneStatus}
+          focusSection={settingsFocusSection}
           mediaPrivacyConsent={mediaPrivacyConsent}
           longTermMemoryConsent={longTermMemoryConsent}
-          longTermMemoryStatus={longTermMemoryStatus}
-          learnedCustomObjects={learnedCustomObjects}
-          longTermMemories={longTermMemories}
-          staleLongTermCount={staleLongTermMemories.length}
-          onClose={() => setSettingsOpen(false)}
+          onClose={closeSettings}
           onWatchOnlyChange={setWatchOnly}
           onCameraConsentChange={setCameraCaptureConsent}
           onMicrophoneConsentChange={setMicrophoneCaptureConsent}
           onCloudMediaConsentChange={setCloudMediaTransmissionConsent}
           onCloudMemoryAccessChange={setCloudMemoryAccess}
           onCloudSummarySyncChange={setCloudSummarySync}
-          onDeleteCustomObject={deleteLearnedCustomObject}
-          onExportCustomObjects={exportCustomObjectsToFile}
-          onDeleteLongTermMemory={deleteLongTermMemory}
-          onForgetAllLongTermMemories={forgetAllLongTermMemories}
-          onExportLongTermMemories={exportLongTermMemoriesToFile}
         />
       )}
-
-      {debugEnabled && (
-        <DebugPanel
-          language={language}
-          expanded={debugExpanded}
-          transcript={transcript}
-          showDebugEvidence={showDebugEvidence}
-          mediaState={mediaState}
-          networkState={networkState}
-          samplingMode={samplingMode}
-          speechState={speechState}
-          cloudProviderKind={cloudProviderKind}
-          proactivePromptState={proactivePromptState}
-          proactiveDetectorStatus={proactiveDetectorStatus}
-          lastCommand={lastCommand}
-          lastDialogueEvent={lastDialogueEvent}
-          lastFrame={lastFrame}
-          lastVisualAnswer={lastVisualAnswer}
-          activeVisualEvidence={activeVisualEvidence}
-          lastLocalVision={lastLocalVision}
-          lastProactivePrompt={lastProactivePrompt}
-          conversationMemory={conversationMemory}
-          longTermMemories={longTermMemories}
-          longTermMemoryStatus={longTermMemoryStatus}
-          longTermMemoryConsent={longTermMemoryConsent}
-          learnedCustomObjects={learnedCustomObjects}
-          selectedObjectRegion={selectedObjectRegion}
-          conversationTelemetry={conversationTelemetry}
-          latencyMetrics={latencyMetrics}
-          edgeCloudMetrics={edgeCloudMetrics}
-          dailySpend={getDailySpend()}
-          onToggleExpanded={() => setDebugExpanded((value) => !value)}
-          onTranscriptChange={setTranscript}
-          onProcessTranscript={() => handleTranscript(transcript)}
-          onSimulateWeakNetwork={markCloudRequestFailed}
-          onUndoTeaching={undoLastTeaching}
-          onToggleDebugEvidence={setShowDebugEvidence}
-        />
-      )}
-    </main>
+    </>
   )
 }
 

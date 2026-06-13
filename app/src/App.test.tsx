@@ -62,12 +62,26 @@ function mockSupportedMediaDevices() {
   })
 }
 
-async function expandDebugPanel() {
-  fireEvent.click(screen.getByText('展开调试面板'))
+async function submitChat(text: string) {
+  const input = await screen.findByLabelText(/输入消息|Message/)
+  fireEvent.change(input, { target: { value: text } })
+  const form = input.closest('form')
+  expect(form).toBeTruthy()
+  fireEvent.submit(form!)
 }
 
 async function openSettings() {
-  fireEvent.click(screen.getByText('设置'))
+  fireEvent.click(screen.getByLabelText('设置'))
+}
+
+async function openMemoryPage() {
+  fireEvent.click(screen.getByLabelText(/我的记忆|My memory/))
+  await screen.findByRole('heading', { name: /我的记忆|My memory/ })
+}
+
+async function waitForMediaReady() {
+  const button = await screen.findByText(/按住说话|Hold to talk/)
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false))
 }
 
 describe('App', () => {
@@ -81,144 +95,179 @@ describe('App', () => {
   afterEach(() => {
     cleanup()
     localStorage.clear()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
-  it('renders assist shell and processes local commands through debug panel', async () => {
+  it('renders assist shell without debug panel or operator chrome', () => {
     render(<App />)
 
-    expect(screen.getByText('实时视觉语音 AI 输入')).toBeTruthy()
-    expect(screen.queryByText('设置每日预算上限 $0.01')).toBeNull()
+    expect(screen.queryByText('实时视觉语音 AI 输入')).toBeNull()
+    expect(screen.queryByText('展开调试面板')).toBeNull()
+    expect(screen.queryByText('运营台')).toBeNull()
+    expect(screen.getByLabelText('我的记忆')).toBeTruthy()
+    expect(screen.getByLabelText('设置')).toBeTruthy()
+  })
 
-    await expandDebugPanel()
-    await waitFor(() => {
-      expect(screen.getAllByText('ready').length).toBeGreaterThanOrEqual(3)
-    })
+  it('processes local commands through dialogue panel chat input', async () => {
+    render(<App />)
 
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: 'switch to English' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
-
-    expect(await screen.findByText('Realtime Vision Voice AI Input')).toBeTruthy()
-    expect(screen.getByText('Switched to English.')).toBeTruthy()
+    await submitChat('switch to English')
+    expect(await screen.findByText('Switched to English.')).toBeTruthy()
+    expect(screen.getByText('switch to English')).toBeTruthy()
   })
 
   it('starts push-to-talk dialogue from the microphone control', async () => {
     render(<App />)
 
-    await expandDebugPanel()
-    await screen.findByText('Media devices initialized.')
-    fireEvent.mouseDown(screen.getByText('按住说话'))
+    await waitForMediaReady()
+    fireEvent.pointerDown(screen.getByText('按住说话'), { pointerId: 1, pointerType: 'mouse' })
 
-    expect(screen.getByText('Listening...')).toBeTruthy()
+    expect(await screen.findByText('你好')).toBeTruthy()
+  })
+
+  it('commits push-to-talk transcript through ASR on release', async () => {
+    render(<App />)
+
+    await waitForMediaReady()
+    fireEvent.pointerDown(screen.getByText('按住说话'), { pointerId: 1, pointerType: 'mouse' })
+    await screen.findByText('你好')
+    fireEvent.pointerUp(screen.getByText('松开结束'), { pointerId: 1, pointerType: 'mouse' })
+
+    expect(await screen.findByText('你好。')).toBeTruthy()
+    expect(screen.getByText('你好')).toBeTruthy()
+  })
+
+  it('renders split assist layout without overlay talk FAB', () => {
+    const { container } = render(<App />)
+
+    expect(container.querySelector('.assist-shell--split')).toBeTruthy()
+    expect(container.querySelector('.talk-fab')).toBeNull()
+  })
+
+  it('returns from memory page back to assist without blanking the camera stage', async () => {
+    const { container } = render(<App />)
+
+    await openMemoryPage()
+    fireEvent.click(screen.getByLabelText('返回 Assist'))
+
+    expect(await screen.findByLabelText('我的记忆')).toBeTruthy()
+    expect(container.querySelector('.assist-shell--split')).toBeTruthy()
+    expect(container.querySelector('.preview-video')).toBeTruthy()
   })
 
   it('shows retry feedback for complex requests during weak network', async () => {
+    const localCommands = await import('./voice/localCommands')
+    vi.spyOn(localCommands, 'canRouteComplexRequest').mockReturnValue(false)
+
     render(<App />)
 
-    await expandDebugPanel()
-    fireEvent.click(screen.getByText('模拟弱网'))
-    await waitFor(() => {
-      expect(screen.getByText('weak')).toBeTruthy()
-    })
+    await submitChat('what is this')
 
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: 'tell me what is in the room' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
-
-    expect(await screen.findByText('网络不佳，请重试')).toBeTruthy()
+    expect((await screen.findAllByText(/网络不佳|网络不稳定|Network is poor|Network is unstable/)).length).toBeGreaterThan(0)
   })
 
-  it('shows transcript-driven multimodal answer state in debug panel', async () => {
+  it('shows multimodal answer in dialogue panel', async () => {
     render(<App />)
 
-    await expandDebugPanel()
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: 'tell me what is in the room' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
+    await submitChat('tell me what is in the room')
 
-    expect(await screen.findByText(/cloud\/general/)).toBeTruthy()
-    expect(screen.getByText(/Objects: 0, scenes: 0, gestures: 0/)).toBeTruthy()
-    expect(await screen.findByText(/No supported TTS provider is available/)).toBeTruthy()
-    expect(screen.getAllByText('unavailable').length).toBeGreaterThan(0)
+    expect(await screen.findByText(/云端视觉模型|cloud visual model/i)).toBeTruthy()
+    expect(screen.getByText('tell me what is in the room')).toBeTruthy()
   })
 
   it('cancels active speech state from the local stop command', async () => {
     render(<App />)
 
-    await expandDebugPanel()
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: 'tell me what is in the room' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
+    await submitChat('tell me what is in the room')
+    await screen.findByText(/云端视觉模型|cloud visual model/i)
 
-    expect(await screen.findByText(/No supported TTS provider is available/)).toBeTruthy()
-
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: 'stop' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
-
+    await submitChat('stop')
     expect(await screen.findByText('已停止对话。')).toBeTruthy()
-    expect(screen.getAllByText('cancelled').length).toBeGreaterThan(0)
+    expect(screen.getByText('stop')).toBeTruthy()
   })
 
-  it('teaches and manages a custom object from settings', async () => {
+  it('teaches and manages a custom object from memory page', async () => {
     render(<App />)
 
-    await expandDebugPanel()
-    await screen.findByText('Media devices initialized.')
+    await waitForMediaReady()
 
     fireEvent.click(screen.getByText('框选中央物体'))
-    expect(screen.getByText('已选择画面中央物体区域。')).toBeTruthy()
+    expect(screen.getByText('已选择画面中央物体区域。', { selector: '.camera-feedback' })).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: '记住这个叫小红杯' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
+    fireEvent.click(screen.getByText('取消框选'))
+    expect(screen.getByText('已取消框选。', { selector: '.camera-feedback' })).toBeTruthy()
+    expect(screen.queryByText('取消框选')).toBeNull()
 
-    expect(await screen.findByText('已记住 小红杯。')).toBeTruthy()
+    fireEvent.click(screen.getByText('框选中央物体'))
+    expect(screen.getByText('已选择画面中央物体区域。', { selector: '.camera-feedback' })).toBeTruthy()
 
-    await openSettings()
+    await submitChat('记住这个叫小红杯')
+    expect(await screen.findByText('记住这个叫小红杯')).toBeTruthy()
+
+    await openMemoryPage()
     expect(screen.getAllByText('小红杯').length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByText('忘记'))
-    expect(await screen.findByText('已删除已学物体。')).toBeTruthy()
-    expect(screen.getAllByText('暂无已学物体').length).toBeGreaterThan(0)
+    expect(await screen.findByText(/框选物体并说/)).toBeTruthy()
   })
 
-  it('shows and manages local long-term memories in settings', async () => {
+  it('starts with empty long-term memories and creates one from explicit intent', async () => {
     render(<App />)
 
-    await openSettings()
-    expect(await screen.findByText(/User likes red objects/)).toBeTruthy()
-    expect(screen.getByText(/2 条本地加密记忆/)).toBeTruthy()
+    await openMemoryPage()
+    expect(screen.getByText('暂无长期记忆')).toBeTruthy()
+
+    window.history.pushState({}, '', '/')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    await submitChat('我喜欢红色')
+    await screen.findByText('我喜欢红色')
+
+    await openMemoryPage()
+    expect(await screen.findByText(/用户喜欢红色/)).toBeTruthy()
+  })
+
+  it('short-circuits explicit remember requests into local memory', async () => {
+    render(<App />)
+
+    await submitChat('帮我记住钥匙在门口柜子')
+
+    expect((await screen.findAllByText('已记住。')).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/云端视觉模型|cloud visual model/i)).toBeNull()
+
+    await openMemoryPage()
+    expect(await screen.findByText(/钥匙在门口柜子/)).toBeTruthy()
+  })
+
+  it('manages long-term memories on memory page', async () => {
+    render(<App />)
+
+    await submitChat('我喜欢红色')
+    await screen.findByText('我喜欢红色')
+
+    await openMemoryPage()
+    expect(await screen.findByText(/用户喜欢红色/)).toBeTruthy()
 
     fireEvent.click(screen.getAllByText('删除')[0])
-    expect(await screen.findByText('已删除长期记忆。')).toBeTruthy()
-    expect(screen.getByText(/1 条本地加密记忆/)).toBeTruthy()
-
-    fireEvent.click(screen.getByText('忘记全部长期记忆'))
-    expect(await screen.findByText('已忘记所有长期记忆。')).toBeTruthy()
-    expect(screen.getByText('暂无长期记忆')).toBeTruthy()
+    expect(await screen.findByText('暂无长期记忆')).toBeTruthy()
   })
 
-  it('toggles long-term memory cloud controls in settings', async () => {
+  it('toggles long-term memory authorization in settings only', async () => {
     render(<App />)
 
     await openSettings()
-    expect(await screen.findByText(/云端访问：关闭/)).toBeTruthy()
+    expect(screen.getByText('记忆授权')).toBeTruthy()
+    expect(screen.queryByText(/条本地加密记忆/)).toBeNull()
+
     fireEvent.click(screen.getByLabelText('允许云端访问相关长期记忆'))
     fireEvent.click(screen.getByLabelText('启用仅摘要云端记忆同步'))
 
-    expect(screen.getByText(/云端访问：已授权/)).toBeTruthy()
-    expect(screen.getByText(/摘要同步：开/)).toBeTruthy()
+    expect((screen.getByLabelText('允许云端访问相关长期记忆') as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByLabelText('启用仅摘要云端记忆同步') as HTMLInputElement).checked).toBe(true)
   })
 
-  it('restores proactive prompt state and handles proactive voice controls', async () => {
+  it('handles proactive voice controls through dialogue panel', async () => {
     localStorage.setItem(
       'proactive-prompt-state-v1',
       JSON.stringify({
@@ -240,44 +289,24 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/主动提醒: 关/)).toBeTruthy()
+    expect(screen.queryByText('展开调试面板')).toBeNull()
 
-    await expandDebugPanel()
-    expect(screen.getByText(/Daily 3\/12, intensity: normal/)).toBeTruthy()
-
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: '多提醒我' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
-
+    await submitChat('多提醒我')
     expect(await screen.findByText('我会多提醒你。')).toBeTruthy()
-    expect(screen.getByText(/Daily 3\/40, intensity: more/)).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: '闭嘴，别主动说话' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
-
+    await submitChat('闭嘴，别主动说话')
     expect(await screen.findByText('已关闭主动提示。')).toBeTruthy()
-    expect(screen.getByText(/主动提醒: 关/)).toBeTruthy()
   })
 
-  it('keeps dialogue processing available when proactive prompts are disabled', async () => {
+  it('navigates to memory route from assist chrome', async () => {
     render(<App />)
 
-    await expandDebugPanel()
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: '闭嘴，别主动说话' },
-    })
-    fireEvent.click(screen.getByText('处理转写'))
-    expect(await screen.findByText('已关闭主动提示。')).toBeTruthy()
+    await openMemoryPage()
+    expect(window.location.pathname).toBe('/memory')
 
-    fireEvent.change(screen.getByLabelText('语音转写模拟器'), {
-      target: { value: 'tell me what is in the room' },
+    fireEvent.click(screen.getByText('返回 Assist'))
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/')
     })
-    fireEvent.click(screen.getByText('处理转写'))
-
-    expect(await screen.findByText(/cloud\/general/)).toBeTruthy()
   })
-
 })

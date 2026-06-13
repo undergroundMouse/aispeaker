@@ -50,4 +50,10 @@ describe('conversationEntry', () => {
   it('detects budget-specific messaging', () => {
     expect(detectSystemFailureVariant('今日云端预算已用尽', 'zh')).toBe('budget')
   })
+
+  it('detects backend setup messaging', () => {
+    expect(detectSystemFailureVariant('无法连接本地后端，请先运行 npm run dev:server。', 'zh')).toBe(
+      'backend',
+    )
+  })
 })

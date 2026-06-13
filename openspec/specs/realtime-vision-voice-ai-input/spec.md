@@ -16,11 +16,11 @@ The system SHALL call the device camera to capture real-time video and continuou
 - **THEN** the system shows a camera permission error and does not attempt to send camera frames to AI
 
 ### Requirement: Microphone capture and conversation triggering
-The system SHALL capture user speech through the microphone and support both voice wake-up and push-to-talk triggering for natural dialogue.
+The system SHALL capture user speech through the microphone, recognize spoken input through the Assist ASR pipeline on push-to-talk, and support both voice wake-up and push-to-talk triggering for natural dialogue.
 
 #### Scenario: Push-to-talk starts dialogue
 - **WHEN** the user presses the configured push-to-talk control and speaks
-- **THEN** the system captures microphone audio and starts a dialogue turn from the captured speech
+- **THEN** the system captures microphone audio, streams interim transcript text to the Assist dialogue panel, and starts a dialogue turn from the final recognized transcript when push-to-talk ends
 
 #### Scenario: Voice wake-up starts dialogue
 - **WHEN** voice wake-up is enabled and the local wake trigger is detected
@@ -49,7 +49,11 @@ The system SHALL use WebRTC-compatible media stream capture and SHALL support Ch
 - **THEN** the system shows an unsupported-environment message and does not start media capture
 
 ### Requirement: Local simple voice commands
-The system SHALL recognize a configured set of simple Chinese and English command phrases locally, including custom object memory management commands, and SHALL trigger their mapped actions without cloud processing.
+The system SHALL recognize a configured set of simple Chinese and English command phrases locally, including custom object memory management commands, and SHALL trigger their mapped actions without cloud processing. Recognized local commands SHALL still be recorded in the Assist dialogue panel as completed voice turns.
+
+#### Scenario: Local command is recognized without cloud processing
+- **WHEN** the user says a configured local command phrase
+- **THEN** the system recognizes the phrase locally, executes the mapped action without cloud processing, and records the command transcript and outcome in the dialogue panel
 
 #### Scenario: Local greeting command is recognized
 - **WHEN** the user says a configured greeting phrase such as "你好" or "hello"
@@ -190,8 +194,38 @@ The system SHALL run lightweight edge-side vision models, such as MobileNet-comp
 - **WHEN** the user asks a complex visual question that requires cloud processing
 - **THEN** the system includes relevant local object or scene candidates in the cloud request context
 
+### Requirement: Committed voice transcripts appear in dialogue history
+The client SHALL present every committed push-to-talk or wake-trigger transcript and its mapped reply in the Assist dialogue panel history, including local commands, teaching outcomes, network failures, and multimodal answers.
+
+#### Scenario: Local command turn is visible in dialogue panel
+- **WHEN** the user commits a recognized local command through voice input
+- **THEN** the dialogue panel shows the user transcript and the command outcome text as a completed turn
+
+#### Scenario: Teaching turn is visible in dialogue panel
+- **WHEN** the user commits a custom-object teaching transcript
+- **THEN** the dialogue panel shows the teaching transcript and the teaching result message as a completed turn
+
+#### Scenario: Multimodal answer turn remains visible in dialogue panel
+- **WHEN** the user commits a dialogue transcript that produces a multimodal visual answer
+- **THEN** the dialogue panel shows the user transcript and assistant answer as a completed turn
+
+### Requirement: Cloud visual-language memory candidates
+The backend cloud visual-language path SHALL support optional structured memory candidates in the same Qwen3-VL response used for visual answers so the client can persist durable long-term memories without a second model call.
+
+#### Scenario: Cloud response includes memory candidates
+- **WHEN** a cloud visual-language turn identifies durable user-specific facts such as preferences, habits, or usual object locations
+- **THEN** the normalized visual answer payload may include zero or more memory candidates with type, summary, and optional subject, value, and tags fields
+
+#### Scenario: Unauthorized cloud memory stays local
+- **WHEN** memory candidates are returned from a cloud visual-language response
+- **THEN** the client persists them only in local encrypted long-term memory and does not upload raw encrypted memory records
+
+#### Scenario: Memory candidates respect cloud memory authorization
+- **WHEN** a cloud-bound request is constructed and the user has not authorized cloud access to long-term memory
+- **THEN** existing long-term memory context is excluded from the cloud request while newly returned memory candidates may still be persisted locally after the turn completes
+
 ### Requirement: Cloud visual-language model processing
-The system SHALL route complex visual question answering tasks to a configured cloud visual-language model such as Qwen3-VL, GPT-4V, LLaVA, or an equivalent backend only when local processing, including local custom object matching where relevant, cannot answer confidently and network conditions allow. In production, cloud visual-language execution SHALL be performed by the backend control plane; the client SHALL submit cloud-required turns to the backend API rather than calling upstream model providers directly. For cloud-bound image answers, the system SHALL request normalized region coordinates when the provider supports them and SHALL preserve both region coordinates and short explanation text in the normalized answer payload. The Assist surface SHALL present cloud answers and failure messages through the conversation strip rather than requiring users to read engineering debug cards.
+The system SHALL route complex visual question answering tasks to a configured cloud visual-language model such as Qwen3-VL, GPT-4V, LLaVA, or an equivalent backend only when local processing, including local custom object matching where relevant, cannot answer confidently and network conditions allow. In production, cloud visual-language execution SHALL be performed by the backend control plane; the client SHALL submit cloud-required turns to the backend API rather than calling upstream model providers directly. For cloud-bound image answers, the system SHALL request normalized region coordinates when the provider supports them and SHALL preserve both region coordinates and short explanation text in the normalized answer payload. The Assist surface SHALL present cloud answers and failure messages through the floating caption layer and system toasts rather than requiring users to read engineering debug cards.
 
 #### Scenario: Complex visual question uses cloud model
 - **WHEN** the user asks a complex visual question that cannot be answered confidently by local processing and the network is available
@@ -214,16 +248,16 @@ The system SHALL route complex visual question answering tasks to a configured c
 - **THEN** the system does not start the cloud request and prompts "网络不佳，请重试"
 
 #### Scenario: Operator sees active cloud provider
-- **WHEN** an operator opens the Assist surface or Operator surface
+- **WHEN** an operator opens the Operator surface
 - **THEN** the UI displays whether the active cloud visual-language path is `backend+Qwen3-VL-8B-Thinking`, direct Qwen, or `mock`
 
 #### Scenario: Budget exhaustion uses distinct messaging
 - **WHEN** the backend blocks a cloud-required visual question because the daily budget cap would be exceeded
-- **THEN** the conversation strip shows a budget-specific message distinct from the weak-network retry message
+- **THEN** the UI shows a budget-specific message distinct from the weak-network retry message
 
 #### Scenario: Cloud answer is visible on Assist without debug scrolling
 - **WHEN** a cloud visual-language answer completes on the default Assist surface
-- **THEN** the user can read the answer in the conversation strip without scrolling to an engineering event card
+- **THEN** the user can read the answer in the caption layer without scrolling to an engineering event card
 
 ### Requirement: Cloud provider environment configuration
 The system SHALL document and load cloud execution configuration from environment variables without committing secrets to source control. Production client configuration SHALL reference the backend control plane base URL and device credentials; upstream model API keys SHALL be configured only on the server.
@@ -256,18 +290,18 @@ The client operations admin surface SHALL read conversation telemetry and budget
 - **THEN** per-conversation token and cost telemetry lists are not shown in the primary assist layout
 
 ### Requirement: Assist talk controls placement
-The Assist surface SHALL place push-to-talk and object-selection controls adjacent to the camera stage and conversation strip.
+The Assist surface SHALL place push-to-talk and object-selection controls in the left vision column beneath the camera preview.
 
 #### Scenario: Push-to-talk is reachable without opening Settings
 - **WHEN** the Assist surface is active and microphone capture is authorized
-- **THEN** the user can start and stop push-to-talk from the primary assist controls without opening Settings or debug panels
+- **THEN** the user can start and stop push-to-talk from the left vision column controls without opening Settings or debug panels
 
 #### Scenario: Object selection hint is available during teaching
 - **WHEN** no object region is selected on the Assist surface
 - **THEN** the UI provides a visible hint that the user may tap the preview or use a select-object control before teaching a custom object
 
 ### Requirement: Visual evidence canvas overlay for image answers
-The system SHALL draw highlight boxes on the live video preview for image-related answers when visual evidence regions are available, using a Canvas overlay aligned to the current preview frame.
+The system SHALL draw highlight boxes on the live video preview for image-related answers when visual evidence regions are available, using a Canvas overlay aligned to the current preview frame. When evidence becomes visible, highlight boxes SHALL fade in rather than appearing instantaneously.
 
 #### Scenario: Image answer highlights referenced region
 - **WHEN** the system produces an image-related answer with one or more evidence regions
@@ -280,6 +314,36 @@ The system SHALL draw highlight boxes on the live video preview for image-relate
 #### Scenario: No evidence regions are available
 - **WHEN** the system produces an image-related answer without usable evidence regions
 - **THEN** the system does not draw misleading highlight boxes on the video preview
+
+#### Scenario: Evidence regions animate into view
+- **WHEN** visual evidence regions first become visible for an answer
+- **THEN** the Canvas overlay animates the highlight boxes into view with a fade-in effect
+
+### Requirement: Streaming caption presentation on Assist
+The client SHALL surface non-final `DialogueResponseSegment` events and user ASR transcript updates to the Assist dialogue panel so both user and assistant text can update while the active dialogue turn is still in progress.
+
+#### Scenario: User transcript updates during ASR
+- **WHEN** the ASR provider emits interim transcript text during an active push-to-talk session
+- **THEN** the Assist dialogue panel updates the user transcript area before the final ASR result arrives
+
+#### Scenario: Caption updates on partial assistant segment
+- **WHEN** the dialogue pipeline emits a non-final response segment for the active turn
+- **THEN** the Assist dialogue panel updates the assistant line for that turn before the final segment arrives
+
+#### Scenario: Caption finalizes on last segment
+- **WHEN** the dialogue pipeline emits the final response segment for a turn
+- **THEN** the Assist dialogue panel marks that turn assistant text as final and retains it in session history
+
+### Requirement: Object selection and teaching visual feedback
+The client SHALL provide visible selection and teaching feedback on the Assist camera preview when users select object regions or complete teaching actions.
+
+#### Scenario: Selection box animates after tap
+- **WHEN** the user selects an object region from a preview tap
+- **THEN** the selection box appears with a brief motion feedback animation
+
+#### Scenario: Teaching feedback is shown on failure
+- **WHEN** a teaching action fails on the Assist surface
+- **THEN** the UI shows user-visible failure feedback on or adjacent to the camera preview without requiring debug panel access
 
 ### Requirement: Spoken visual reasoning for image answers
 The system SHALL speak a short explanation of why the AI reached an image-related conclusion when visual evidence is available, using the same TTS path as other AI responses.
@@ -356,26 +420,22 @@ The system SHALL keep the end-to-end latency from user speech to received AI res
 - **THEN** the system reports whether the turn met the 3 second requirement and the below-2.5-second implementation target
 
 ### Requirement: Streaming speech synthesis
-The system SHALL use streaming speech synthesis through Web Speech API or a cloud TTS stream to improve response speed.
+The system SHALL stream AI response text into speakable segments and SHALL cancel active speech output when a new dialogue turn starts or when the user interrupts playback through push-to-talk.
 
-#### Scenario: TTS begins from first speakable segment
-- **WHEN** the AI response is produced as streamed text segments
-- **THEN** the system begins TTS playback after the first speakable segment is available without waiting for the full final answer
+#### Scenario: Assistant response streams into TTS
+- **WHEN** the dialogue pipeline produces one or more response segments for a turn
+- **THEN** the system feeds those segments into the active TTS provider without waiting for the full response to finish when streaming is supported
 
-#### Scenario: Full-answer TTS fallback
-- **WHEN** the AI provider only returns a complete final answer instead of streamed segments
-- **THEN** the system synthesizes the complete answer through the same TTS lifecycle
-
-#### Scenario: Weak-network TTS fallback
-- **WHEN** cloud streaming TTS is configured but the system is offline or in a weak-network state
-- **THEN** the system uses an available local TTS provider such as Web Speech API or reports that spoken output is unavailable
-
-#### Scenario: User interrupts speech output
+#### Scenario: Active speech is cancelled on new turn
 - **WHEN** the user issues a supported stop command or starts a new dialogue turn while TTS playback is active
 - **THEN** the system cancels the current TTS playback and updates the speaking state
 
+#### Scenario: Push-to-talk cancels active TTS before ASR
+- **WHEN** the user starts push-to-talk while TTS playback is active
+- **THEN** the system cancels TTS, begins ASR capture, and does not play assistant audio until the committed user transcript is processed
+
 ### Requirement: ASR and TTS quality targets
-The system SHALL achieve more than 95% ASR word accuracy in quiet environments and a TTS naturalness MOS greater than 4.0 for the selected spoken-output provider.
+The system SHALL achieve more than 95% ASR word accuracy in quiet environments through the Assist-visible ASR pipeline and a TTS naturalness MOS greater than 4.0 for the selected spoken-output provider.
 
 #### Scenario: Quiet-environment ASR accuracy is evaluated
 - **WHEN** the ASR pipeline is tested against the configured quiet-environment utterance fixture

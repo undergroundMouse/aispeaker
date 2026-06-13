@@ -16,6 +16,11 @@
 | 8 | `pr/08-local-voice-commands` | 端侧识别简单指令并本地触发动作 |
 | 9 | `pr/09-network-fallback` | 弱网/离线时本地指令可用，复杂请求提示重试 |
 | 10 | `pr/10-bilingual-i18n` | 中英文界面与语音切换语言 |
+| 11–22 | `pr/11` … `pr/22-long-term-memory-ui` | 多模态契约、端侧视觉、自定义物体、长期记忆（EventBus 架构） |
+| 23 | `pr/23-realtime-vision-voice-openspec` | OpenSpec 主规格与变更归档 |
+| 24 | `pr/24-streaming-tts-migration` | Hook 架构迁移 + 流式 TTS |
+| 25 | `pr/25-proactive-voice-prompts` | 主动语音提示 |
+| 26 | `pr/26-visual-evidence-highlighting` | 视觉证据预览高亮 |
 
 ## 推送到 GitHub
 

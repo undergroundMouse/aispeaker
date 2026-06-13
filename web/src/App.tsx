@@ -1,5 +1,6 @@
 import './App.css'
 import { useMemo, useState } from 'react'
+import { VisualEvidenceOverlay } from './components/VisualEvidenceOverlay'
 import { useRealtimeVisionVoice } from './hooks/useRealtimeVisionVoice'
 import { getMessages } from './i18n'
 
@@ -66,6 +67,10 @@ function App() {
             playsInline
             className="preview-video"
             onClick={(event) => selectObjectRegionFromPointer(event.clientX, event.clientY)}
+          />
+          <VisualEvidenceOverlay
+            regions={activeVisualEvidence?.regions ?? []}
+            visible={Boolean(activeVisualEvidence?.evidenceAvailable)}
           />
           {selectedObjectRegion && (
             <div

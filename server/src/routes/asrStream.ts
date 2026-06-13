@@ -1,4 +1,5 @@
-import type { Server } from 'node:http'
+import type { IncomingMessage } from 'node:http'
+import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { ServerConfig } from '../config.js'
 import { ParaformerRealtimeAsrSession } from '../providers/paraformerRealtimeAsr.js'
@@ -13,9 +14,20 @@ type ClientStopMessage = {
   type: 'stop'
 }
 
+type UpgradeServer = {
+  on(
+    event: 'upgrade',
+    listener: (request: IncomingMessage, socket: Duplex, head: Buffer) => void,
+  ): unknown
+}
+
 type ClientMessage = ClientStartMessage | ClientStopMessage | { type: string }
 
-export function attachAsrStreamWebSocket(server: Server, config: ServerConfig): void {
+function isClientStartMessage(message: ClientMessage): message is ClientStartMessage {
+  return message.type === 'start'
+}
+
+export function attachAsrStreamWebSocket(server: UpgradeServer, config: ServerConfig): void {
   const wss = new WebSocketServer({ noServer: true })
 
   server.on('upgrade', (request, socket, head) => {
@@ -48,13 +60,17 @@ export function attachAsrStreamWebSocket(server: Server, config: ServerConfig): 
 
     clientSocket.on('message', async (data, isBinary) => {
       if (isBinary) {
-        session?.sendAudio(Buffer.from(data))
+        const audio =
+          data instanceof ArrayBuffer
+            ? Buffer.from(data)
+            : Buffer.from(data as ArrayLike<number>)
+        session?.sendAudio(audio)
         return
       }
 
       const message = JSON.parse(data.toString()) as ClientMessage
 
-      if (message.type === 'start') {
+      if (isClientStartMessage(message)) {
         if (!config.qwenApiKey) {
           sendJson({ type: 'error', message: 'Cloud speech recognition is not configured.' })
           clientSocket.close()

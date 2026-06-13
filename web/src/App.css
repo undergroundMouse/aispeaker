@@ -85,11 +85,16 @@
   white-space: nowrap;
 }
 
-.toolbar__custom-object {
+.toolbar__custom-object,
+.toolbar__memory {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.toolbar__memory {
+  flex-basis: 100%;
 }
 
 .toolbar__custom-object input {
@@ -99,6 +104,21 @@
   border-radius: 8px;
   background: #0f1117;
   color: #e8eaed;
+}
+
+.toolbar__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #c4c7ce;
+  font-size: 0.8rem;
+}
+
+.toolbar__btn--memory {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app__main {

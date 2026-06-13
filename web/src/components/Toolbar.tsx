@@ -21,8 +21,11 @@ import {
   type CustomObjectRecognizedPayload,
   type CustomObjectRecord,
   type CustomObjectRegionSelectedPayload,
+  type LongTermMemoryRecord,
   type VisionRegion,
 } from '../core/vision/types'
+
+const ACTIVE_USER_ID = 'local-user'
 
 export function Toolbar() {
   const [language, setLanguage] = useState(appCore.languageStore.getLanguage())
@@ -44,10 +47,26 @@ export function Toolbar() {
   const [selectedRegion, setSelectedRegion] = useState<VisionRegion | null>(null)
   const [learnedObjects, setLearnedObjects] = useState<CustomObjectRecord[]>([])
   const [customObjectMessage, setCustomObjectMessage] = useState('')
+  const [longTermMemories, setLongTermMemories] = useState<LongTermMemoryRecord[]>([])
+  const [longTermMemoryMessage, setLongTermMemoryMessage] = useState('')
+  const [cloudMemoryAccess, setCloudMemoryAccessState] = useState(
+    appCore.cloudGateway.getLongTermMemoryConsent().cloudMemoryAccess,
+  )
+  const [cloudSummarySync, setCloudSummarySyncState] = useState(
+    appCore.cloudGateway.getLongTermMemoryConsent().cloudSummarySync,
+  )
   const text = useMemo(() => getMessages(language), [language])
 
   const refreshLearnedObjects = useCallback(async () => {
     setLearnedObjects(await appCore.cloudGateway.listCustomObjects())
+  }, [])
+
+  const refreshLongTermMemories = useCallback(async () => {
+    const store = appCore.cloudGateway.getLongTermMemoryStore()
+    const memories = await store.list(ACTIVE_USER_ID)
+    setLongTermMemories(memories)
+    const status = store.getStatus()
+    setLongTermMemoryMessage(status.available ? '' : status.message ?? 'Local long-term memory is unavailable.')
   }, [])
 
   useEffect(() => {
@@ -87,7 +106,11 @@ export function Toolbar() {
         setCustomObjectMessage(payload.answer)
       },
     )
+    const refreshTimer = window.setTimeout(() => {
+      void refreshLongTermMemories()
+    }, 0)
     return () => {
+      window.clearTimeout(refreshTimer)
       unsubStream()
       unsubFrames()
       unsubVoice()
@@ -99,7 +122,7 @@ export function Toolbar() {
       unsubRegion()
       unsubRecognized()
     }
-  }, [])
+  }, [refreshLongTermMemories])
 
   const cameraOn = streamState.status === 'active' || streamState.status === 'starting'
   const voiceOn = voiceState.status !== 'disabled'
@@ -179,6 +202,39 @@ export function Toolbar() {
       await refreshLearnedObjects()
     },
     [refreshLearnedObjects],
+  )
+
+  const deleteLongTermMemory = useCallback(
+    async (id: string) => {
+      await appCore.cloudGateway.getLongTermMemoryStore().delete(ACTIVE_USER_ID, id)
+      setLongTermMemoryMessage('已删除长期记忆。')
+      await refreshLongTermMemories()
+    },
+    [refreshLongTermMemories],
+  )
+
+  const forgetAllLongTermMemories = useCallback(async () => {
+    await appCore.cloudGateway.getLongTermMemoryStore().forgetAll(ACTIVE_USER_ID)
+    setLongTermMemoryMessage('已忘记所有长期记忆。')
+    await refreshLongTermMemories()
+  }, [refreshLongTermMemories])
+
+  const setCloudMemoryAccess = useCallback(
+    (enabled: boolean) => {
+      const next = { cloudMemoryAccess: enabled, cloudSummarySync }
+      appCore.cloudGateway.setLongTermMemoryConsent(next)
+      setCloudMemoryAccessState(enabled)
+    },
+    [cloudSummarySync],
+  )
+
+  const setCloudSummarySync = useCallback(
+    (enabled: boolean) => {
+      const next = { cloudMemoryAccess, cloudSummarySync: enabled }
+      appCore.cloudGateway.setLongTermMemoryConsent(next)
+      setCloudSummarySyncState(enabled)
+    },
+    [cloudMemoryAccess],
   )
 
   const voiceStatusLabel =
@@ -282,6 +338,47 @@ export function Toolbar() {
               onClick={() => void deleteCustomObject(object.id)}
             >
               忘记 {object.name}
+            </button>
+          ))}
+        </div>
+        <div className="toolbar__memory">
+          <label className="toolbar__check">
+            <input
+              type="checkbox"
+              checked={cloudMemoryAccess}
+              onChange={(event) => setCloudMemoryAccess(event.target.checked)}
+            />
+            允许云端使用相关长期记忆
+          </label>
+          <label className="toolbar__check">
+            <input
+              type="checkbox"
+              checked={cloudSummarySync}
+              onChange={(event) => setCloudSummarySync(event.target.checked)}
+            />
+            同步必要摘要
+          </label>
+          <span className="toolbar__stats">长期记忆: {longTermMemories.length}</span>
+          <button
+            type="button"
+            className="toolbar__btn toolbar__btn--secondary"
+            onClick={forgetAllLongTermMemories}
+            disabled={longTermMemories.length === 0}
+          >
+            一键遗忘
+          </button>
+          {longTermMemoryMessage && (
+            <span className="toolbar__stats toolbar__stats--local">{longTermMemoryMessage}</span>
+          )}
+          {longTermMemories.map((memory) => (
+            <button
+              key={memory.id}
+              type="button"
+              className="toolbar__btn toolbar__btn--secondary toolbar__btn--memory"
+              title={`${memory.type}, last used ${new Date(memory.lastUsedAt).toLocaleDateString()}`}
+              onClick={() => void deleteLongTermMemory(memory.id)}
+            >
+              删除 {memory.summary}
             </button>
           ))}
         </div>

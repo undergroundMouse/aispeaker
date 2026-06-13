@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import './test/resizeObserver'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -102,7 +103,7 @@ describe('App', () => {
   it('renders assist shell without debug panel or operator chrome', () => {
     render(<App />)
 
-    expect(screen.queryByText('实时视觉语音 AI 输入')).toBeNull()
+    expect(screen.getByRole('heading', { name: '实时视觉语音 AI 输入' })).toBeTruthy()
     expect(screen.queryByText('展开调试面板')).toBeNull()
     expect(screen.queryByText('运营台')).toBeNull()
     expect(screen.getByLabelText('我的记忆')).toBeTruthy()

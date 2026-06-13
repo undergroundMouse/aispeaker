@@ -93,7 +93,9 @@ describe('visualEvidence', () => {
 describe('why follow-up evidence reuse', () => {
   it('answers why questions from recent memory evidence', async () => {
     const service = new MultimodalDialogueService({
-      localVisionAnalyzer: new MockLocalVisionAnalyzer(),
+      localVisionAnalyzer: new MockLocalVisionAnalyzer({
+        objectCandidates: [{ label: 'cup', confidence: 0.9, region: appleRegion }],
+      }),
     })
 
     const first = await service.handleTurn({

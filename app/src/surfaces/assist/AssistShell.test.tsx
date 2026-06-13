@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import '../../test/resizeObserver'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AssistShell } from './AssistShell'

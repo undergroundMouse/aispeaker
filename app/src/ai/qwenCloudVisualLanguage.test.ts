@@ -40,15 +40,15 @@ describe('readQwenCloudProviderConfig', () => {
     expect(readQwenCloudProviderConfig({})).toBeNull()
   })
 
-  it('reads WaveSpeed defaults from env', () => {
+  it('reads DashScope defaults from env', () => {
     expect(
       readQwenCloudProviderConfig({
         VITE_QWEN_API_KEY: 'sk-test',
       }),
     ).toEqual({
       apiKey: 'sk-test',
-      baseUrl: 'https://llm.wavespeed.ai/v1',
-      model: 'qwen/qwen3-vl-8b-thinking',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-vl-plus',
     })
   })
 })

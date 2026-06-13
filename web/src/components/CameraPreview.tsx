@@ -2,12 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { eventBus } from '../core/event-bus'
 import { appCore } from '../core/bootstrap'
 import { MEDIA_EVENTS, type StreamState } from '../core/media/types'
+import {
+  CUSTOM_OBJECT_EVENTS,
+  type CustomObjectRegionSelectedPayload,
+  type VisionRegion,
+} from '../core/vision/types'
 
 export function CameraPreview() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [streamState, setStreamState] = useState<StreamState>(
     appCore.mediaStreamManager.getState(),
   )
+  const [selectedRegion, setSelectedRegion] = useState<VisionRegion | null>(null)
 
   useEffect(() => {
     return eventBus.on<StreamState>(MEDIA_EVENTS.STREAM_STATE, setStreamState)
@@ -28,6 +34,22 @@ export function CameraPreview() {
 
   const handleRetry = useCallback(() => {
     void appCore.mediaStreamManager.start().catch(() => {})
+  }, [])
+
+  const selectCenterRegion = useCallback(() => {
+    const region: VisionRegion = {
+      x: 0.3,
+      y: 0.25,
+      width: 0.4,
+      height: 0.5,
+      label: 'selected object',
+    }
+    setSelectedRegion(region)
+    const payload: CustomObjectRegionSelectedPayload = {
+      region,
+      timestamp: Date.now(),
+    }
+    eventBus.emit(CUSTOM_OBJECT_EVENTS.REGION_SELECTED, payload)
   }, [])
 
   if (streamState.status === 'inactive') {
@@ -62,6 +84,24 @@ export function CameraPreview() {
         playsInline
         muted
       />
+      {selectedRegion && (
+        <div
+          className="camera-preview__selection"
+          style={{
+            left: `${selectedRegion.x * 100}%`,
+            top: `${selectedRegion.y * 100}%`,
+            width: `${selectedRegion.width * 100}%`,
+            height: `${selectedRegion.height * 100}%`,
+          }}
+        />
+      )}
+      <button
+        type="button"
+        className="camera-preview__select"
+        onClick={selectCenterRegion}
+      >
+        框选中间物体
+      </button>
     </div>
   )
 }

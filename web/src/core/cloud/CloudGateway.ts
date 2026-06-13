@@ -9,13 +9,16 @@ import type { VoiceTurn } from '../voice/types'
 import {
   LocalCustomObjectStore,
   PrototypeCustomObjectFeatureExtractor,
+  createCustomObjectRecord,
   findCustomObjectCandidate,
 } from '../vision/CustomObjectMemory'
 import {
   CUSTOM_OBJECT_EVENTS,
   type CustomObjectFeatureExtractor,
+  type CustomObjectRecord,
   type CustomObjectRecognizedPayload,
   type CustomObjectStore,
+  type VisionRegion,
 } from '../vision/types'
 
 export class CloudGateway {
@@ -59,6 +62,32 @@ export class CloudGateway {
 
   getLatestThumbnail(): ThumbnailFrame | null {
     return this.latestThumbnail
+  }
+
+  async teachCustomObject(name: string, region: VisionRegion): Promise<CustomObjectRecord | null> {
+    if (!this.latestThumbnail || !name.trim()) return null
+
+    const record = await createCustomObjectRecord({
+      name: name.trim(),
+      frame: this.latestThumbnail,
+      region,
+      store: this.customObjectStore,
+      extractor: this.customObjectExtractor,
+    })
+    this.lastCustomObjectId = record.id
+    return record
+  }
+
+  listCustomObjects(): Promise<CustomObjectRecord[]> {
+    return this.customObjectStore.list()
+  }
+
+  async deleteCustomObject(id: string): Promise<boolean> {
+    const deleted = await this.customObjectStore.delete(id)
+    if (this.lastCustomObjectId === id) {
+      this.lastCustomObjectId = null
+    }
+    return deleted
   }
 
   async submitComplexTurn(turn: VoiceTurn): Promise<void> {

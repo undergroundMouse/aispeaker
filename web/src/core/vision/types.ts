@@ -116,11 +116,17 @@ export interface MultimodalDialogueResult {
 
 export const CUSTOM_OBJECT_EVENTS = {
   RECOGNIZED: 'vision:custom-object:recognized',
+  REGION_SELECTED: 'vision:custom-object:region-selected',
 } as const
 
 export interface CustomObjectRecognizedPayload {
   candidate: VisionCandidate
   answer: string
+  timestamp: number
+}
+
+export interface CustomObjectRegionSelectedPayload {
+  region: VisionRegion
   timestamp: number
 }
 

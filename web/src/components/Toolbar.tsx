@@ -16,6 +16,13 @@ import {
   type VoiceInputState,
   type VoiceTranscript,
 } from '../core/voice/types'
+import {
+  CUSTOM_OBJECT_EVENTS,
+  type CustomObjectRecognizedPayload,
+  type CustomObjectRecord,
+  type CustomObjectRegionSelectedPayload,
+  type VisionRegion,
+} from '../core/vision/types'
 
 export function Toolbar() {
   const [language, setLanguage] = useState(appCore.languageStore.getLanguage())
@@ -33,7 +40,15 @@ export function Toolbar() {
   const [networkState, setNetworkState] = useState(appCore.networkMonitor.getState())
   const [retryMessage, setRetryMessage] = useState('')
   const [frameCount, setFrameCount] = useState(0)
+  const [customObjectName, setCustomObjectName] = useState('')
+  const [selectedRegion, setSelectedRegion] = useState<VisionRegion | null>(null)
+  const [learnedObjects, setLearnedObjects] = useState<CustomObjectRecord[]>([])
+  const [customObjectMessage, setCustomObjectMessage] = useState('')
   const text = useMemo(() => getMessages(language), [language])
+
+  const refreshLearnedObjects = useCallback(async () => {
+    setLearnedObjects(await appCore.cloudGateway.listCustomObjects())
+  }, [])
 
   useEffect(() => {
     const unsubStream = eventBus.on<StreamState>(MEDIA_EVENTS.STREAM_STATE, setStreamState)
@@ -59,6 +74,19 @@ export function Toolbar() {
       setLanguage(payload.language)
       setRetryMessage('')
     })
+    const unsubRegion = eventBus.on<CustomObjectRegionSelectedPayload>(
+      CUSTOM_OBJECT_EVENTS.REGION_SELECTED,
+      (payload) => {
+        setSelectedRegion(payload.region)
+        setCustomObjectMessage('已选择物体区域。')
+      },
+    )
+    const unsubRecognized = eventBus.on<CustomObjectRecognizedPayload>(
+      CUSTOM_OBJECT_EVENTS.RECOGNIZED,
+      (payload) => {
+        setCustomObjectMessage(payload.answer)
+      },
+    )
     return () => {
       unsubStream()
       unsubFrames()
@@ -68,6 +96,8 @@ export function Toolbar() {
       unsubNetwork()
       unsubRetry()
       unsubLanguage()
+      unsubRegion()
+      unsubRecognized()
     }
   }, [])
 
@@ -121,6 +151,35 @@ export function Toolbar() {
     appCore.conversationManager.setState(next)
     setConversationState(next)
   }, [conversationState])
+
+  const teachCustomObject = useCallback(async () => {
+    if (!selectedRegion || !customObjectName.trim()) {
+      setCustomObjectMessage('请先框选物体并输入名称。')
+      return
+    }
+
+    const record = await appCore.cloudGateway.teachCustomObject(
+      customObjectName,
+      selectedRegion,
+    )
+    if (!record) {
+      setCustomObjectMessage('暂无可用画面，请先打开摄像头。')
+      return
+    }
+
+    setCustomObjectMessage(`已记住 ${record.name}。`)
+    setCustomObjectName('')
+    await refreshLearnedObjects()
+  }, [customObjectName, refreshLearnedObjects, selectedRegion])
+
+  const deleteCustomObject = useCallback(
+    async (id: string) => {
+      await appCore.cloudGateway.deleteCustomObject(id)
+      setCustomObjectMessage('已删除已学物体。')
+      await refreshLearnedObjects()
+    },
+    [refreshLearnedObjects],
+  )
 
   const voiceStatusLabel =
     voiceState.error?.message ??
@@ -193,9 +252,39 @@ export function Toolbar() {
         {retryMessage && (
           <span className="toolbar__stats toolbar__stats--retry">{retryMessage}</span>
         )}
+        {customObjectMessage && (
+          <span className="toolbar__stats toolbar__stats--local">{customObjectMessage}</span>
+        )}
         <span className="toolbar__stats">
           {text.frames}: {frameCount}
         </span>
+        <div className="toolbar__custom-object">
+          <input
+            value={customObjectName}
+            onChange={(event) => setCustomObjectName(event.target.value)}
+            placeholder="给已框选物体命名"
+          />
+          <button
+            type="button"
+            className="toolbar__btn toolbar__btn--secondary"
+            onClick={teachCustomObject}
+          >
+            记住物体
+          </button>
+          <span className="toolbar__stats">
+            已学物体: {learnedObjects.length}
+          </span>
+          {learnedObjects.map((object) => (
+            <button
+              key={object.id}
+              type="button"
+              className="toolbar__btn toolbar__btn--secondary"
+              onClick={() => void deleteCustomObject(object.id)}
+            >
+              忘记 {object.name}
+            </button>
+          ))}
+        </div>
       </div>
     </header>
   )

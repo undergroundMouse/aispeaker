@@ -85,6 +85,22 @@
   white-space: nowrap;
 }
 
+.toolbar__custom-object {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.toolbar__custom-object input {
+  min-width: 160px;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid #363a45;
+  border-radius: 8px;
+  background: #0f1117;
+  color: #e8eaed;
+}
+
 .app__main {
   flex: 1;
   display: flex;
@@ -94,6 +110,7 @@
 }
 
 .camera-preview {
+  position: relative;
   width: min(640px, 100%);
   aspect-ratio: 16 / 9;
   border-radius: 12px;
@@ -107,6 +124,26 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.camera-preview__selection {
+  position: absolute;
+  border: 3px solid #4f7cff;
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgb(15 17 23 / 28%);
+  pointer-events: none;
+}
+
+.camera-preview__select {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 999px;
+  background: #4f7cff;
+  color: #fff;
+  cursor: pointer;
 }
 
 .camera-preview--loading,

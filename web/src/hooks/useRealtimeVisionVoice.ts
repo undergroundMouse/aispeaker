@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { InMemoryOperationsAdmin } from '../admin/operationsAdmin'
 import { emptyConversationMemory } from '../ai/conversationMemory'
 import {
   LocalCustomObjectStore,
@@ -42,6 +43,7 @@ import { deriveNetworkState } from '../network/networkState'
 import type {
   AppLanguage,
   ConversationMemoryState,
+  ConversationTelemetryRecord,
   CustomObjectRecord,
   DialogueEvent,
   LocalCommandMatch,
@@ -90,7 +92,11 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   const [longTermMemoryStore] = useState(() => new LocalLongTermMemoryStore())
   const [telemetryStore] = useState(() => new InMemoryConversationTelemetryStore())
   const [cloudGateway] = useState(() => new CloudGateway({ telemetryStore }))
+  const [operationsAdmin] = useState(
+    () => new InMemoryOperationsAdmin(telemetryStore, 'ops-admin-token'),
+  )
   const conversationIdRef = useRef(`conversation-${Date.now()}`)
+  const [conversationTelemetry, setConversationTelemetry] = useState<ConversationTelemetryRecord[]>([])
   const [dialogueService] = useState(
     () =>
       new MultimodalDialogueService({
@@ -485,6 +491,19 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     setFeedback(language === 'zh' ? '已导出已学物体。' : 'Exported learned custom objects.')
   }, [customObjectStore, language])
 
+  const refreshConversationTelemetry = useCallback(() => {
+    setConversationTelemetry(telemetryStore.list())
+  }, [telemetryStore])
+
+  const setDailyBudgetCap = useCallback(
+    (cap: number | null) => {
+      operationsAdmin.setDailyBudgetCap('ops-admin-token', cap)
+      cloudGateway.setDailyBudgetCap(cap)
+      refreshConversationTelemetry()
+    },
+    [cloudGateway, operationsAdmin, refreshConversationTelemetry],
+  )
+
   const updateProactivePromptState = useCallback((updater: (state: ProactivePromptState) => ProactivePromptState) => {
     setProactivePromptState((state) => saveProactivePromptState(updater(state)))
   }, [])
@@ -791,6 +810,8 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         },
       })
 
+      refreshConversationTelemetry()
+
       setLastVisualAnswer(result.answer)
       setActiveVisualEvidence(createActiveVisualEvidence(result.answer, transcriptCommittedAt))
       setLastLocalVision(result.localVision)
@@ -825,6 +846,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       longTermMemoryStore,
       mediaState.cameraStatus,
       networkState,
+      refreshConversationTelemetry,
       refreshLongTermMemories,
       refreshLearnedCustomObjects,
       samplingMode,
@@ -880,6 +902,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     speechState,
     latencyMetrics,
     mediaPrivacyConsent,
+    conversationTelemetry,
     setWatchOnly,
     setLanguage,
     startPushToTalk,
@@ -896,6 +919,8 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     setCameraCaptureConsent,
     setMicrophoneCaptureConsent,
     setCloudMediaTransmissionConsent,
+    setDailyBudgetCap,
+    getDailySpend: () => operationsAdmin.getDailySpend('ops-admin-token'),
     exportLongTermMemoriesToFile,
     exportCustomObjectsToFile,
     markCloudRequestFailed,

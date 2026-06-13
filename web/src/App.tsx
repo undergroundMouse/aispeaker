@@ -49,7 +49,10 @@ function App() {
     setCameraCaptureConsent,
     setMicrophoneCaptureConsent,
     setCloudMediaTransmissionConsent,
+    setDailyBudgetCap,
     mediaPrivacyConsent,
+    conversationTelemetry,
+    getDailySpend,
     exportLongTermMemoriesToFile,
     exportCustomObjectsToFile,
     markCloudRequestFailed,
@@ -388,6 +391,30 @@ function App() {
               </ul>
             ) : (
               <p>No custom objects learned</p>
+            )}
+          </article>
+          <article>
+            <h3>Operations admin</h3>
+            <p>Daily spend: ${getDailySpend().toFixed(4)}</p>
+            <button type="button" onClick={() => setDailyBudgetCap(0.01)}>
+              Set daily budget cap to $0.01
+            </button>
+            <button type="button" onClick={() => setDailyBudgetCap(null)}>
+              Clear daily budget cap
+            </button>
+            {conversationTelemetry.length > 0 ? (
+              <ul className="learned-list">
+                {conversationTelemetry.map((record) => (
+                  <li key={record.conversationId}>
+                    <span>
+                      {record.conversationId}: {record.estimatedTokens} est / {record.actualTokens ?? 0} actual tokens,
+                      ${record.estimatedCost.toFixed(4)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No conversation telemetry yet</p>
             )}
           </article>
           <article>

@@ -3,6 +3,8 @@ import { emptyConversationMemory } from '../ai/conversationMemory'
 import {
   LocalCustomObjectStore,
   PrototypeCustomObjectFeatureExtractor,
+  downloadCustomObjectExport,
+  exportCustomObjects,
   getCustomObjectMemoryMessage,
   parseTeachingName,
   teachCustomObject,
@@ -10,6 +12,8 @@ import {
 import {
   LocalLongTermMemoryStore,
   createDefaultLongTermMemory,
+  downloadLongTermMemoryExport,
+  exportLongTermMemories,
   getLongTermMemoryReviewPrompt,
 } from '../ai/longTermMemory'
 import { MockLocalVisionAnalyzer } from '../ai/localVision'
@@ -458,6 +462,18 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     setMediaPrivacyConsent((consent) => saveMediaPrivacyConsent({ ...consent, cloudMediaTransmission: enabled }))
   }, [])
 
+  const exportLongTermMemoriesToFile = useCallback(async () => {
+    const payload = await exportLongTermMemories(longTermMemoryStore, ACTIVE_USER_ID)
+    downloadLongTermMemoryExport(payload)
+    setFeedback(language === 'zh' ? '已导出长期记忆。' : 'Exported long-term memories.')
+  }, [language, longTermMemoryStore])
+
+  const exportCustomObjectsToFile = useCallback(async () => {
+    const payload = await exportCustomObjects(customObjectStore)
+    downloadCustomObjectExport(payload)
+    setFeedback(language === 'zh' ? '已导出已学物体。' : 'Exported learned custom objects.')
+  }, [customObjectStore, language])
+
   const updateProactivePromptState = useCallback((updater: (state: ProactivePromptState) => ProactivePromptState) => {
     setProactivePromptState((state) => saveProactivePromptState(updater(state)))
   }, [])
@@ -869,6 +885,8 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     setCameraCaptureConsent,
     setMicrophoneCaptureConsent,
     setCloudMediaTransmissionConsent,
+    exportLongTermMemoriesToFile,
+    exportCustomObjectsToFile,
     markCloudRequestFailed,
   }
 }

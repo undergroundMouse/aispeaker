@@ -50,6 +50,8 @@ function App() {
     setMicrophoneCaptureConsent,
     setCloudMediaTransmissionConsent,
     mediaPrivacyConsent,
+    exportLongTermMemoriesToFile,
+    exportCustomObjectsToFile,
     markCloudRequestFailed,
   } = useRealtimeVisionVoice()
   const text = useMemo(() => getMessages(language), [language])
@@ -306,6 +308,9 @@ function App() {
             <button type="button" onClick={forgetAllLongTermMemories} disabled={longTermMemories.length === 0}>
               Forget all long-term memories
             </button>
+            <button type="button" onClick={exportLongTermMemoriesToFile} disabled={longTermMemories.length === 0}>
+              Export long-term memories
+            </button>
             {longTermMemories.length > 0 ? (
               <ul className="learned-list memory-list">
                 {longTermMemories.map((memory) => (
@@ -367,6 +372,9 @@ function App() {
           </article>
           <article>
             <h3>Learned custom objects</h3>
+            <button type="button" onClick={exportCustomObjectsToFile} disabled={learnedCustomObjects.length === 0}>
+              Export learned objects
+            </button>
             {learnedCustomObjects.length > 0 ? (
               <ul className="learned-list">
                 {learnedCustomObjects.map((object) => (

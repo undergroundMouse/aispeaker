@@ -461,6 +461,50 @@ export function getLongTermMemoryReviewPrompt(
     : `${memories.length} long-term memories have not been used for over 30 days. Please review them.`
 }
 
+export interface LongTermMemoryExportPayload {
+  userId: string
+  exportedAt: number
+  memories: Array<
+    Pick<
+      LongTermMemoryRecord,
+      'id' | 'type' | 'summary' | 'details' | 'subject' | 'value' | 'tags' | 'lastUsedAt' | 'updatedAt'
+    >
+  >
+}
+
+export async function exportLongTermMemories(
+  store: LongTermMemoryStore,
+  userId: string,
+  now = Date.now(),
+): Promise<LongTermMemoryExportPayload> {
+  const memories = await store.list(userId)
+  return {
+    userId,
+    exportedAt: now,
+    memories: memories.map((memory) => ({
+      id: memory.id,
+      type: memory.type,
+      summary: memory.summary,
+      details: memory.details,
+      subject: memory.subject,
+      value: memory.value,
+      tags: memory.tags,
+      lastUsedAt: memory.lastUsedAt,
+      updatedAt: memory.updatedAt,
+    })),
+  }
+}
+
+export function downloadLongTermMemoryExport(payload: LongTermMemoryExportPayload): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `long-term-memories-${payload.userId}-${payload.exportedAt}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 function encryptMemoryRecord(record: LongTermMemoryRecord, key: string): PersistedLongTermMemoryRecord {
   return {
     id: record.id,

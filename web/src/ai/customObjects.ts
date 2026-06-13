@@ -304,6 +304,36 @@ export function getCustomObjectMemoryMessage(language: AppLanguage, status: 'for
   return messages[language][status]
 }
 
+export interface CustomObjectExportPayload {
+  exportedAt: number
+  objects: Array<Pick<CustomObjectRecord, 'id' | 'name' | 'createdAt' | 'updatedAt' | 'source' | 'region'>>
+}
+
+export async function exportCustomObjects(store: CustomObjectStore, now = Date.now()): Promise<CustomObjectExportPayload> {
+  const records = await store.list()
+  return {
+    exportedAt: now,
+    objects: records.map((record) => ({
+      id: record.id,
+      name: record.name,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      source: record.source,
+      region: record.region,
+    })),
+  }
+}
+
+export function downloadCustomObjectExport(payload: CustomObjectExportPayload): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `custom-objects-${payload.exportedAt}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 function toRegionMetadata(region: VisionRegion, frame: SampledVideoFrame): CustomObjectRegionMetadata {
   return {
     ...region,

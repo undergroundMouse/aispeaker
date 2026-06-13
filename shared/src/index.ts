@@ -29,6 +29,17 @@ export interface LocalVisionHints {
   gestures: GestureDetection[]
 }
 
+export type LongTermMemoryType = 'preference' | 'object-location' | 'habit' | 'fact'
+
+export interface LongTermMemoryCandidate {
+  type: LongTermMemoryType
+  summary: string
+  subject?: string
+  value?: string
+  tags?: string[]
+  syncEligible?: boolean
+}
+
 export interface VisualAnswer {
   kind: VisualAnswerKind
   answer: string
@@ -39,6 +50,7 @@ export interface VisualAnswer {
   explanation?: string
   evidenceAvailable: boolean
   requiresSpeech: boolean
+  memoryCandidates?: LongTermMemoryCandidate[]
 }
 
 export interface CloudMediaConsent {

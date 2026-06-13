@@ -1,22 +1,23 @@
 import type {
   AppLanguage,
-  CustomObjectRecord,
+  DeviceStatus,
   LongTermMemoryConsentSettings,
-  LongTermMemoryRecord,
-  LongTermMemoryStoreStatus,
   MediaPrivacyConsent,
 } from '../../types'
+import { useEffect, useRef } from 'react'
 import { getMessages } from '../../i18n'
+import { formatPermissionStatus } from './formatPermissionStatus'
+
+export type SettingsFocusSection = 'privacy' | null
 
 export interface SettingsDrawerProps {
   language: AppLanguage
   watchOnly: boolean
+  cameraStatus: DeviceStatus
+  microphoneStatus: DeviceStatus
+  focusSection?: SettingsFocusSection
   mediaPrivacyConsent: MediaPrivacyConsent
   longTermMemoryConsent: LongTermMemoryConsentSettings
-  longTermMemoryStatus: LongTermMemoryStoreStatus
-  learnedCustomObjects: CustomObjectRecord[]
-  longTermMemories: LongTermMemoryRecord[]
-  staleLongTermCount: number
   onClose: () => void
   onWatchOnlyChange: (enabled: boolean) => void
   onCameraConsentChange: (enabled: boolean) => void
@@ -24,22 +25,16 @@ export interface SettingsDrawerProps {
   onCloudMediaConsentChange: (enabled: boolean) => void
   onCloudMemoryAccessChange: (enabled: boolean) => void
   onCloudSummarySyncChange: (enabled: boolean) => void
-  onDeleteCustomObject: (id: string) => void
-  onExportCustomObjects: () => void
-  onDeleteLongTermMemory: (id: string) => void
-  onForgetAllLongTermMemories: () => void
-  onExportLongTermMemories: () => void
 }
 
 export function SettingsDrawer({
   language,
   watchOnly,
+  cameraStatus,
+  microphoneStatus,
+  focusSection = null,
   mediaPrivacyConsent,
   longTermMemoryConsent,
-  longTermMemoryStatus,
-  learnedCustomObjects,
-  longTermMemories,
-  staleLongTermCount,
   onClose,
   onWatchOnlyChange,
   onCameraConsentChange,
@@ -47,13 +42,18 @@ export function SettingsDrawer({
   onCloudMediaConsentChange,
   onCloudMemoryAccessChange,
   onCloudSummarySyncChange,
-  onDeleteCustomObject,
-  onExportCustomObjects,
-  onDeleteLongTermMemory,
-  onForgetAllLongTermMemories,
-  onExportLongTermMemories,
 }: SettingsDrawerProps) {
   const text = getMessages(language)
+  const privacySectionRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (focusSection !== 'privacy') {
+      return
+    }
+
+    privacySectionRef.current?.scrollIntoView({ block: 'start' })
+    privacySectionRef.current?.focus({ preventScroll: true })
+  }, [focusSection])
 
   return (
     <div className="settings-drawer-backdrop" role="presentation" onClick={onClose}>
@@ -70,8 +70,24 @@ export function SettingsDrawer({
           </button>
         </header>
 
-        <section>
+        <section
+          ref={privacySectionRef}
+          className={['settings-drawer__section', focusSection === 'privacy' ? 'settings-drawer__section--focused' : '']
+            .filter(Boolean)
+            .join(' ')}
+          tabIndex={-1}
+        >
           <h3>{text.settingsPrivacy}</h3>
+          <dl className="permission-status-grid">
+            <div>
+              <dt>{text.cameraPermissionLabel}</dt>
+              <dd>{formatPermissionStatus(language, cameraStatus)}</dd>
+            </div>
+            <div>
+              <dt>{text.microphonePermissionLabel}</dt>
+              <dd>{formatPermissionStatus(language, microphoneStatus)}</dd>
+            </div>
+          </dl>
           <label className="toggle-row">
             <input
               type="checkbox"
@@ -111,7 +127,7 @@ export function SettingsDrawer({
         </section>
 
         <section>
-          <h3>{text.settingsMemory}</h3>
+          <h3>{text.settingsMemoryAuthorization}</h3>
           <label className="toggle-row">
             <input
               type="checkbox"
@@ -128,78 +144,6 @@ export function SettingsDrawer({
             />
             {text.enableSummarySync}
           </label>
-
-          {staleLongTermCount > 0 && (
-            <p className="warning">{text.staleMemoryWarning(staleLongTermCount)}</p>
-          )}
-
-          <h4>{text.learnedObjectsTitle}</h4>
-          <button
-            type="button"
-            onClick={onExportCustomObjects}
-            disabled={learnedCustomObjects.length === 0}
-          >
-            {text.exportLearnedObjects}
-          </button>
-          {learnedCustomObjects.length > 0 ? (
-            <ul className="learned-list">
-              {learnedCustomObjects.map((object) => (
-                <li key={object.id}>
-                  <span>{object.name}</span>
-                  <button type="button" onClick={() => onDeleteCustomObject(object.id)}>
-                    {text.forgetObject}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>{text.noCustomObjects}</p>
-          )}
-
-          <h4>{text.longTermMemoryTitle}</h4>
-          <p>
-            {longTermMemoryStatus.available
-              ? text.longTermMemorySummary(
-                  longTermMemories.length,
-                  longTermMemoryConsent.cloudMemoryAccess,
-                  longTermMemoryConsent.cloudSummarySync,
-                )
-              : longTermMemoryStatus.message ?? text.longTermMemoryUnavailable}
-          </p>
-          <button
-            type="button"
-            onClick={onForgetAllLongTermMemories}
-            disabled={longTermMemories.length === 0}
-          >
-            {text.forgetAllMemories}
-          </button>
-          <button
-            type="button"
-            onClick={onExportLongTermMemories}
-            disabled={longTermMemories.length === 0}
-          >
-            {text.exportMemories}
-          </button>
-          {longTermMemories.length > 0 ? (
-            <ul className="learned-list memory-list">
-              {longTermMemories.map((memory) => (
-                <li key={memory.id}>
-                  <span>
-                    {memory.summary}
-                    <small>
-                      {memory.type}, {text.lastUsed} {new Date(memory.lastUsedAt).toLocaleDateString()}
-                      {memory.weakenedAt ? `, ${text.weakened}` : ''}
-                    </small>
-                  </span>
-                  <button type="button" onClick={() => onDeleteLongTermMemory(memory.id)}>
-                    {text.deleteMemory}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>{text.noLongTermMemories}</p>
-          )}
         </section>
       </aside>
     </div>

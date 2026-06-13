@@ -1,5 +1,9 @@
+import type { CloudVisualAnswerResponse } from '@ai/shared'
 import type { CloudVisualLanguageProvider, CloudVisualQuestionRequest, VisualAnswer } from '../types'
-import { getNetworkRetryMessage } from '../voice/localCommands'
+import {
+  resolveCloudFailureMessage,
+  resolveFetchFailureMessage,
+} from '../voice/cloudFailureMessages'
 import { postCloudVisualAnswer, type BackendClientConfig } from './backendClient'
 
 async function frameToDataUrl(frame: NonNullable<CloudVisualQuestionRequest['frame']>): Promise<string> {
@@ -9,6 +13,18 @@ async function frameToDataUrl(frame: NonNullable<CloudVisualQuestionRequest['fra
     reader.onerror = () => reject(reader.error ?? new Error('Failed to read frame blob.'))
     reader.readAsDataURL(frame.blob)
   })
+}
+
+function createNetworkErrorAnswer(answer: string): VisualAnswer {
+  return {
+    kind: 'network-error',
+    answer,
+    source: 'system',
+    referencedEntities: [],
+    regions: [],
+    evidenceAvailable: false,
+    requiresSpeech: true,
+  }
 }
 
 export class HttpCloudVisualLanguageProvider implements CloudVisualLanguageProvider {
@@ -52,41 +68,35 @@ export class HttpCloudVisualLanguageProvider implements CloudVisualLanguageProvi
         }
       : null
 
-    const response = await postCloudVisualAnswer(
-      this.config,
-      {
-        conversationId,
-        transcript: request.transcript,
-        language: request.language,
-        consent,
-        frame,
-        localVisionHints: {
-          objectCandidates: request.localVision.objectCandidates,
-          sceneCandidates: request.localVision.sceneCandidates,
-          gestures: request.localVision.gestures,
+    let response: CloudVisualAnswerResponse
+    try {
+      response = await postCloudVisualAnswer(
+        this.config,
+        {
+          conversationId,
+          transcript: request.transcript,
+          language: request.language,
+          consent,
+          frame,
+          localVisionHints: {
+            objectCandidates: request.localVision.objectCandidates,
+            sceneCandidates: request.localVision.sceneCandidates,
+            gestures: request.localVision.gestures,
+          },
+          longTermMemoryContext: request.longTermMemoryContext?.promptText ?? null,
         },
-        longTermMemoryContext: request.longTermMemoryContext?.promptText ?? null,
-      },
-      this.fetchImpl,
-    )
+        this.fetchImpl,
+      )
+    } catch (error) {
+      return createNetworkErrorAnswer(resolveFetchFailureMessage(request.language, error))
+    }
 
     this.lastTelemetry = response.telemetry
 
     if (!response.ok) {
-      const message =
-        response.reason === 'budget-exceeded'
-          ? response.message
-          : getNetworkRetryMessage(request.language)
-
-      return {
-        kind: 'network-error',
-        answer: message,
-        source: 'system',
-        referencedEntities: [],
-        regions: [],
-        evidenceAvailable: false,
-        requiresSpeech: true,
-      }
+      return createNetworkErrorAnswer(
+        resolveCloudFailureMessage(request.language, response.reason, response.message),
+      )
     }
 
     return response.answer

@@ -25,6 +25,7 @@ const MORE_REMINDERS_DAILY_CAP = 40
 const DEFAULT_HISTORY_WINDOW_MS = 30_000
 const MIN_PROMPT_CONFIDENCE = 0.9
 const DUPLICATE_COOLDOWN_MS = 30_000
+const SAFETY_URGENT_COOLDOWN_MS = 5 * 60_000
 const SESSION_RATE_WINDOW_MS = 60_000
 
 interface StoredProactivePromptState {
@@ -83,6 +84,22 @@ export interface ProactivePromptPolicyResult {
     | 'daily-cap'
     | 'sensitive-ocr'
     | 'user-speaking'
+}
+
+export function shouldUseProactiveMockSignals(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  return import.meta.env.DEV && new URLSearchParams(window.location.search).has('proactive-mock')
+}
+
+export function createProactiveLocalDetector(): ProactiveLocalDetector {
+  if (shouldUseProactiveMockSignals()) {
+    return new MockProactiveLocalDetector()
+  }
+
+  return new MockProactiveLocalDetector({ signals: [] })
 }
 
 export class MockProactiveLocalDetector implements ProactiveLocalDetector {
@@ -405,7 +422,9 @@ export function evaluateProactivePromptPolicy({
   }
 
   const lastPromptAt = counters.lastPromptAtByKey[match.promptKey]
-  if (lastPromptAt !== undefined && now - lastPromptAt < DUPLICATE_COOLDOWN_MS) {
+  const cooldownMs =
+    match.priority === 'urgent' && match.severity === 'safety' ? SAFETY_URGENT_COOLDOWN_MS : DUPLICATE_COOLDOWN_MS
+  if (lastPromptAt !== undefined && now - lastPromptAt < cooldownMs) {
     return { accepted: false, reason: 'duplicate' }
   }
 

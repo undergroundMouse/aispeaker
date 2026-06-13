@@ -14,7 +14,7 @@ import type {
 } from '../types'
 import { stripMediaForCloud, withEphemeralFrameAsync } from '../media/ephemeralMedia'
 import { isCloudMediaTransmissionAuthorized } from '../media/mediaPrivacy'
-import { getNetworkRetryMessage } from '../voice/localCommands'
+import { getUnavailableCloudMessage } from '../voice/cloudFailureMessages'
 import { emptyConversationMemory, resolveFollowUpReference, updateConversationMemory } from './conversationMemory'
 import { MockCloudVisualLanguageProvider, normalizeProviderVisualAnswer } from './cloudVisualLanguage'
 import {
@@ -102,7 +102,7 @@ export class MultimodalDialogueService {
           finalizeVisualAnswer(
             {
               kind: 'network-error',
-              answer: getNetworkRetryMessage(request.language),
+              answer: getUnavailableCloudMessage(request.language, request.networkState),
               source: 'system',
               referencedEntities: [],
               regions: [],
@@ -137,7 +137,7 @@ export class MultimodalDialogueService {
       )
 
       return completeResult(
-        addRememberPrompt(normalizeProviderVisualAnswer(cloudAnswer, request.language), request.language),
+        normalizeProviderVisualAnswer(cloudAnswer, request.language),
         localVision,
         memory,
         longTermMemoryContext,
@@ -162,7 +162,7 @@ export class MultimodalDialogueService {
       return null
     }
 
-    const candidateRegion = getTopCandidate(localVision.objectCandidates)?.region
+    const candidateRegion = request.selectedObjectRegion ?? getTopCandidate(localVision.objectCandidates)?.region
     const match = await searchCustomObjects({
       frame: request.frame,
       region: candidateRegion,
@@ -255,18 +255,7 @@ function buildLocalAnswer(
 
   if (isSceneQuestion(normalized)) {
     if (!request.frame) {
-      return finalizeVisualAnswer(
-        {
-          kind: 'clarification',
-          answer: request.language === 'zh' ? '当前视频无法判断场景。' : 'The scene cannot be determined from the current video.',
-          source: 'system',
-          referencedEntities: [],
-          regions: [],
-          evidenceAvailable: false,
-          requiresSpeech: true,
-        },
-        request.language,
-      )
+      return null
     }
 
     const scene = getTopCandidate(localVision.sceneCandidates, defaultLocalVisionThresholds.sceneConfidence)
@@ -347,22 +336,6 @@ function answerObjectWithMemory(object: VisionCandidate, memorySummary: string, 
 
 function answerScene(scene: VisionCandidate, language: AppLanguage): string {
   return language === 'zh' ? `你现在可能在 ${scene.label}。` : `You appear to be in a ${scene.label}.`
-}
-
-function addRememberPrompt(answer: VisualAnswer, language: AppLanguage): VisualAnswer {
-  if (answer.source !== 'cloud' || answer.kind !== 'object') {
-    return answer
-  }
-
-  const prompt =
-    language === 'zh'
-      ? ' 要把它作为自定义物体记住吗？请框选它并说“记住这个叫...”。'
-      : ' Do you want me to remember it locally? Select it and say "remember this as ...".'
-
-  return {
-    ...answer,
-    answer: `${answer.answer}${prompt}`,
-  }
 }
 
 async function buildLongTermMemoryContext(

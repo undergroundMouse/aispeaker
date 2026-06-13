@@ -168,13 +168,7 @@ const defaultSceneCandidates: VisionCandidate[] = [
   },
 ]
 
-const defaultObjectCandidates: VisionCandidate[] = [
-  {
-    label: 'cup',
-    confidence: 0.9,
-    region: { x: 0.32, y: 0.28, width: 0.26, height: 0.36, label: 'cup' },
-  },
-]
+const defaultObjectCandidates: VisionCandidate[] = []
 
 const defaultGestures: GestureDetection[] = [
   {

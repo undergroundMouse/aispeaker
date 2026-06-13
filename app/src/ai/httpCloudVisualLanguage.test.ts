@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CloudVisualQuestionRequest } from '../types'
+import { getBackendUnreachableMessage } from '../voice/cloudFailureMessages'
 import { emptyConversationMemory } from './conversationMemory'
 import { HttpCloudVisualLanguageProvider } from './httpCloudVisualLanguage'
 
@@ -27,6 +28,24 @@ function createRequest(): CloudVisualQuestionRequest {
   }
 }
 
+function withMockFileReader<T>(run: () => Promise<T>): Promise<T> {
+  const originalFileReader = globalThis.FileReader
+  class MockFileReader {
+    onload: (() => void) | null = null
+    readAsDataURL() {
+      this.onload?.()
+    }
+    get result() {
+      return 'data:image/jpeg;base64,ZmFrZQ=='
+    }
+  }
+  globalThis.FileReader = MockFileReader as unknown as typeof FileReader
+
+  return run().finally(() => {
+    globalThis.FileReader = originalFileReader
+  })
+}
+
 describe('HttpCloudVisualLanguageProvider', () => {
   it('maps budget-exceeded backend failures to budget message', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
@@ -39,19 +58,7 @@ describe('HttpCloudVisualLanguageProvider', () => {
       }),
     })
 
-    const originalFileReader = globalThis.FileReader
-    class MockFileReader {
-      onload: (() => void) | null = null
-      readAsDataURL() {
-        this.onload?.()
-      }
-      get result() {
-        return 'data:image/jpeg;base64,ZmFrZQ=='
-      }
-    }
-    globalThis.FileReader = MockFileReader as unknown as typeof FileReader
-
-    try {
+    await withMockFileReader(async () => {
       const provider = new HttpCloudVisualLanguageProvider(
         {
           baseUrl: 'http://localhost:3000',
@@ -68,8 +75,58 @@ describe('HttpCloudVisualLanguageProvider', () => {
       const answer = await provider.answerVisualQuestion(createRequest())
       expect(answer.answer).toBe('今日云端预算已用尽')
       expect(fetchImpl).toHaveBeenCalledOnce()
-    } finally {
-      globalThis.FileReader = originalFileReader
-    }
+    })
+  })
+
+  it('maps backend connection failures to setup guidance', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await withMockFileReader(async () => {
+      const provider = new HttpCloudVisualLanguageProvider(
+        {
+          baseUrl: 'http://localhost:3000',
+          deviceApiToken: 'dev-device-token',
+          adminApiToken: 'dev-admin-token',
+        },
+        () => ({
+          conversationId: 'c1',
+          consent: { cloudMediaTransmission: true, cloudMemoryAccess: false },
+        }),
+        fetchImpl,
+      )
+
+      const answer = await provider.answerVisualQuestion(createRequest())
+      expect(answer.answer).toBe(getBackendUnreachableMessage('zh'))
+    })
+  })
+
+  it('maps provider consent failures to settings guidance', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: false,
+        reason: 'provider-error',
+        message: 'Cloud media transmission is not authorized.',
+        telemetry: { estimatedTokens: 0, estimatedCost: 0 },
+      }),
+    })
+
+    await withMockFileReader(async () => {
+      const provider = new HttpCloudVisualLanguageProvider(
+        {
+          baseUrl: 'http://localhost:3000',
+          deviceApiToken: 'dev-device-token',
+          adminApiToken: 'dev-admin-token',
+        },
+        () => ({
+          conversationId: 'c1',
+          consent: { cloudMediaTransmission: true, cloudMemoryAccess: false },
+        }),
+        fetchImpl,
+      )
+
+      const answer = await provider.answerVisualQuestion(createRequest())
+      expect(answer.answer).toBe('请先在设置中授权云端媒体传输。')
+    })
   })
 })

@@ -4,6 +4,7 @@ import {
   createDefaultProactiveRules,
   evaluateProactivePromptPolicy,
   filterSensitiveOcrMatch,
+  createProactiveLocalDetector,
   MockProactiveLocalDetector,
   ProactiveObservationHistory,
   ProactiveRulesEngine,
@@ -168,6 +169,12 @@ describe('proactive prompt local detection', () => {
     expect(result.signals.every((signal) => signal.detectedAt === 20)).toBe(true)
   })
 
+  it('creates a production detector without demo safety signals by default', async () => {
+    const result = await createProactiveLocalDetector().detect(frame, 25)
+
+    expect(result.signals).toEqual([])
+  })
+
   it('handles TensorFlow.js model load failure without throwing', async () => {
     const detector = new TensorFlowJsProactiveDetector({
       loadModel: async () => {
@@ -303,6 +310,27 @@ describe('proactive prompt rules and policy', () => {
 
     expect(result.accepted).toBe(true)
     expect(result.candidate?.text).toContain('似乎')
+  })
+
+  it('keeps urgent safety prompts on a longer duplicate cooldown', () => {
+    const state = createDefaultProactivePromptState(0)
+    const match = createMatch({ priority: 'urgent', severity: 'safety', promptKey: 'risky-scissor-use' })
+
+    expect(
+      evaluateProactivePromptPolicy({
+        match,
+        state: recordProactivePromptSpoken(state, match.promptKey, 60_000),
+        now: 120_000,
+      }).reason,
+    ).toBe('duplicate')
+
+    expect(
+      evaluateProactivePromptPolicy({
+        match,
+        state: recordProactivePromptSpoken(state, match.promptKey, 60_000),
+        now: 360_000,
+      }).accepted,
+    ).toBe(true)
   })
 
   it('applies correction feedback as a confidence penalty', () => {

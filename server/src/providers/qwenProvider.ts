@@ -2,6 +2,8 @@ import type {
   AppLanguage,
   CloudVisualAnswerFrame,
   LocalVisionHints,
+  LongTermMemoryCandidate,
+  LongTermMemoryType,
   VisualAnswer,
   VisualAnswerKind,
   VisionCandidate,
@@ -57,6 +59,14 @@ interface QwenStructuredAnswer {
   confidence?: number
   regions?: VisionRegion[]
   label?: string
+  memoryCandidates?: Array<{
+    type?: LongTermMemoryType
+    summary?: string
+    subject?: string
+    value?: string
+    tags?: string[]
+    syncEligible?: boolean
+  }>
 }
 
 interface OpenAIChatCompletionResponse {
@@ -148,13 +158,16 @@ export function buildQwenVisualPrompt(input: QwenVisualInput): string {
   const memoryContext = input.longTermMemoryContext?.trim()
 
   return [
-    'You are a realtime vision assistant helping a blind or low-vision user understand the camera view.',
+    input.frame
+      ? 'You are a realtime vision assistant helping a blind or low-vision user understand the camera view.'
+      : 'You are a helpful voice and text assistant. The camera is unavailable, so answer from the user message and any provided memory context only.',
     languageInstruction,
     'Return ONLY valid JSON with this schema:',
-    '{ "kind": "object|scene|gesture|general", "answer": "...", "explanation": "...", "confidence": 0.0-1.0, "label": "...", "regions": [{ "x": 0-1, "y": 0-1, "width": 0-1, "height": 0-1, "label": "..." }] }',
+    '{ "kind": "object|scene|gesture|general", "answer": "...", "explanation": "...", "confidence": 0.0-1.0, "label": "...", "regions": [{ "x": 0-1, "y": 0-1, "width": 0-1, "height": 0-1, "label": "..." }], "memoryCandidates": [{ "type": "preference|object-location|habit|fact", "summary": "...", "subject": "...", "value": "...", "tags": ["..."], "syncEligible": false }] }',
     'Rules:',
     '- Coordinates must be normalized between 0 and 1 relative to the image.',
     '- Include at most 3 regions and only when you can ground the answer visually.',
+    '- Include at most 2 memoryCandidates and only for durable user-specific preferences, habits, object locations, or stable facts.',
     '- If you cannot identify an object clearly, set answer to "看不清楚" and regions to [].',
     '- Do not wrap JSON in markdown.',
     memoryContext ? `Relevant memory:\n${memoryContext}` : '',
@@ -235,7 +248,26 @@ function parseStructuredAnswer(
     referencedEntities,
     regions,
     requiresSpeech: true,
+    memoryCandidates: sanitizeMemoryCandidates(structured.memoryCandidates),
   }
+}
+
+function sanitizeMemoryCandidates(
+  candidates: QwenStructuredAnswer['memoryCandidates'],
+): LongTermMemoryCandidate[] {
+  const allowedTypes = new Set<LongTermMemoryType>(['preference', 'object-location', 'habit', 'fact'])
+
+  return (candidates ?? [])
+    .filter((candidate) => candidate.type && allowedTypes.has(candidate.type) && candidate.summary?.trim())
+    .slice(0, 2)
+    .map((candidate) => ({
+      type: candidate.type as LongTermMemoryType,
+      summary: candidate.summary!.trim(),
+      subject: candidate.subject?.trim(),
+      value: candidate.value?.trim(),
+      tags: candidate.tags?.map((tag) => tag.trim()).filter(Boolean),
+      syncEligible: candidate.syncEligible ?? false,
+    }))
 }
 
 function finalizeVisualAnswer(

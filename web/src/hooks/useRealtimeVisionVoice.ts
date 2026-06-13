@@ -17,6 +17,7 @@ import {
   exportLongTermMemories,
   getLongTermMemoryReviewPrompt,
 } from '../ai/longTermMemory'
+import { createEdgeCloudMetricsSession, recordCloudRoutingOutcome } from '../ai/edgeCloudMetrics'
 import { MockLocalVisionAnalyzer } from '../ai/localVision'
 import { MultimodalDialogueService } from '../ai/multimodalDialogue'
 import { MockCloudVisualLanguageProvider } from '../ai/cloudVisualLanguage'
@@ -97,6 +98,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   )
   const conversationIdRef = useRef(`conversation-${Date.now()}`)
   const [conversationTelemetry, setConversationTelemetry] = useState<ConversationTelemetryRecord[]>([])
+  const [edgeCloudMetrics, setEdgeCloudMetrics] = useState(createEdgeCloudMetricsSession)
   const [dialogueService] = useState(
     () =>
       new MultimodalDialogueService({
@@ -108,6 +110,9 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
           cloudGateway,
           () => ({ conversationId: conversationIdRef.current }),
         ),
+        onCloudRoutingOutcome: (outcome) => {
+          setEdgeCloudMetrics((session) => recordCloudRoutingOutcome(session, outcome))
+        },
       }),
   )
   const [speechController] = useState(
@@ -902,6 +907,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     speechState,
     latencyMetrics,
     mediaPrivacyConsent,
+    edgeCloudMetrics,
     conversationTelemetry,
     setWatchOnly,
     setLanguage,

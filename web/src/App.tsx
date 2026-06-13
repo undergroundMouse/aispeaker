@@ -51,6 +51,7 @@ function App() {
     setCloudMediaTransmissionConsent,
     setDailyBudgetCap,
     mediaPrivacyConsent,
+    edgeCloudMetrics,
     conversationTelemetry,
     getDailySpend,
     exportLongTermMemoriesToFile,
@@ -395,7 +396,10 @@ function App() {
           </article>
           <article>
             <h3>Operations admin</h3>
-            <p>Daily spend: ${getDailySpend().toFixed(4)}</p>
+            <p>
+              Daily spend: ${getDailySpend().toFixed(4)} | Cloud reduction:{' '}
+              {Math.round((1 - edgeCloudMetrics.cloudInvocations / 10) * 100)}%
+            </p>
             <button type="button" onClick={() => setDailyBudgetCap(0.01)}>
               Set daily budget cap to $0.01
             </button>

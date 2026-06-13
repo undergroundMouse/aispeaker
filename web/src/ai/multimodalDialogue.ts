@@ -19,6 +19,7 @@ import {
   customObjectToCandidate,
   searchCustomObjects,
 } from './customObjects'
+import { recordCloudRoutingOutcome, type EdgeCloudMetricsSession } from './edgeCloudMetrics'
 import { formatLongTermMemoryPrompt } from './longTermMemory'
 import {
   defaultLocalVisionThresholds,
@@ -34,6 +35,7 @@ export interface MultimodalDialogueServiceOptions {
   cloudProvider?: CloudVisualLanguageProvider
   customObjectStore?: CustomObjectStore
   customObjectFeatureExtractor?: CustomObjectFeatureExtractor
+  onCloudRoutingOutcome?: (outcome: 'local-short-circuit' | 'cloud-invoked') => void
 }
 
 export class MultimodalDialogueService {
@@ -41,17 +43,20 @@ export class MultimodalDialogueService {
   private readonly cloudProvider: CloudVisualLanguageProvider
   private readonly customObjectStore?: CustomObjectStore
   private readonly customObjectFeatureExtractor: CustomObjectFeatureExtractor
+  private readonly onCloudRoutingOutcome?: (outcome: 'local-short-circuit' | 'cloud-invoked') => void
 
   constructor({
     localVisionAnalyzer,
     cloudProvider = new MockCloudVisualLanguageProvider(),
     customObjectStore,
     customObjectFeatureExtractor = new PrototypeCustomObjectFeatureExtractor(),
+    onCloudRoutingOutcome,
   }: MultimodalDialogueServiceOptions) {
     this.localVisionAnalyzer = localVisionAnalyzer
     this.cloudProvider = cloudProvider
     this.customObjectStore = customObjectStore
     this.customObjectFeatureExtractor = customObjectFeatureExtractor
+    this.onCloudRoutingOutcome = onCloudRoutingOutcome
   }
 
   async handleTurn(request: MultimodalDialogueRequest): Promise<MultimodalDialogueResult> {
@@ -66,21 +71,25 @@ export class MultimodalDialogueService {
 
     const whyFollowUpAnswer = buildWhyFollowUpAnswer(request.transcript, memory, request.language)
     if (whyFollowUpAnswer) {
+      this.recordOutcome('local-short-circuit')
       return completeResult(whyFollowUpAnswer, localVision, memory, longTermMemoryContext)
     }
 
     const customObjectAnswer = await this.buildCustomObjectAnswer(request, localVision)
     if (customObjectAnswer) {
+      this.recordOutcome('local-short-circuit')
       return completeResult(customObjectAnswer, localVision, memory, longTermMemoryContext)
     }
 
     const localAnswer = buildLocalAnswer(request, localVision, longTermMemoryContext)
     if (localAnswer) {
+      this.recordOutcome('local-short-circuit')
       return completeResult(localAnswer, localVision, memory, longTermMemoryContext)
     }
 
     const memoryAnswer = buildMemoryAnswer(request)
     if (memoryAnswer) {
+      this.recordOutcome('local-short-circuit')
       return completeResult(memoryAnswer, localVision, memory, longTermMemoryContext)
     }
 
@@ -107,6 +116,7 @@ export class MultimodalDialogueService {
     const cloudMemoryContext = request.longTermMemory?.consent.cloudMemoryAccess
       ? longTermMemoryContext
       : undefined
+    this.recordOutcome('cloud-invoked')
     const cloudAnswer = await this.cloudProvider.answerVisualQuestion({
       transcript: request.transcript,
       frame: request.frame,
@@ -122,6 +132,10 @@ export class MultimodalDialogueService {
       memory,
       longTermMemoryContext,
     )
+  }
+
+  private recordOutcome(outcome: 'local-short-circuit' | 'cloud-invoked'): void {
+    this.onCloudRoutingOutcome?.(outcome)
   }
 
   private async buildCustomObjectAnswer(
@@ -364,4 +378,11 @@ function findMemoryForCandidate(
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLocaleLowerCase().includes(normalizedLabel)),
   )
+}
+
+export function applyEdgeCloudMetrics(
+  session: EdgeCloudMetricsSession,
+  outcome: 'local-short-circuit' | 'cloud-invoked',
+): EdgeCloudMetricsSession {
+  return recordCloudRoutingOutcome(session, outcome)
 }

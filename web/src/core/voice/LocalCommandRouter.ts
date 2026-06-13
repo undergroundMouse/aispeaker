@@ -42,7 +42,7 @@ export class LocalCommandRouter {
       return
     }
 
-    this.cloudGateway.submitComplexTurn(turn)
+    void this.cloudGateway.submitComplexTurn(turn)
   }
 
   private executeLocal(

@@ -6,6 +6,17 @@ import type { NetworkMonitor } from '../network/NetworkMonitor'
 import { NETWORK_EVENTS, type NetworkRetryPrompt } from '../network/types'
 import { MEDIA_EVENTS, type ThumbnailFrame } from '../media/types'
 import type { VoiceTurn } from '../voice/types'
+import {
+  LocalCustomObjectStore,
+  PrototypeCustomObjectFeatureExtractor,
+  findCustomObjectCandidate,
+} from '../vision/CustomObjectMemory'
+import {
+  CUSTOM_OBJECT_EVENTS,
+  type CustomObjectFeatureExtractor,
+  type CustomObjectRecognizedPayload,
+  type CustomObjectStore,
+} from '../vision/types'
 
 export class CloudGateway {
   private unsubscribe?: () => void
@@ -13,15 +24,21 @@ export class CloudGateway {
   private readonly conversationManager?: ConversationManager
   private readonly networkMonitor?: NetworkMonitor
   private readonly languageStore?: LanguageStore
+  private readonly customObjectStore: CustomObjectStore
+  private readonly customObjectExtractor: CustomObjectFeatureExtractor
 
   constructor(
     conversationManager?: ConversationManager,
     networkMonitor?: NetworkMonitor,
     languageStore?: LanguageStore,
+    customObjectStore: CustomObjectStore = new LocalCustomObjectStore(),
+    customObjectExtractor: CustomObjectFeatureExtractor = new PrototypeCustomObjectFeatureExtractor(),
   ) {
     this.conversationManager = conversationManager
     this.networkMonitor = networkMonitor
     this.languageStore = languageStore
+    this.customObjectStore = customObjectStore
+    this.customObjectExtractor = customObjectExtractor
   }
 
   start(): void {
@@ -43,9 +60,30 @@ export class CloudGateway {
     return this.latestThumbnail
   }
 
-  submitComplexTurn(turn: VoiceTurn): void {
+  async submitComplexTurn(turn: VoiceTurn): Promise<void> {
+    const language = this.languageStore?.getLanguage() ?? 'zh'
+    const customObject = await findCustomObjectCandidate({
+      frame: this.latestThumbnail,
+      store: this.customObjectStore,
+      extractor: this.customObjectExtractor,
+    })
+
+    if (customObject) {
+      const answer =
+        language === 'zh'
+          ? `这是 ${customObject.label}。`
+          : `This is ${customObject.label}.`
+      const payload: CustomObjectRecognizedPayload = {
+        candidate: customObject,
+        answer,
+        timestamp: Date.now(),
+      }
+      eventBus.emit(CUSTOM_OBJECT_EVENTS.RECOGNIZED, payload)
+      this.conversationManager?.setState('idle')
+      return
+    }
+
     if (this.networkMonitor && !this.networkMonitor.canSubmitComplexRequest()) {
-      const language = this.languageStore?.getLanguage() ?? 'zh'
       const payload: NetworkRetryPrompt = {
         message: getMessages(language).retryNetwork,
         timestamp: Date.now(),
@@ -57,6 +95,7 @@ export class CloudGateway {
 
     this.conversationManager?.setState('thinking')
     console.debug('[CloudGateway] complex turn queued', turn.turnId, turn.text)
+    console.debug('[CloudGateway] ask whether to remember unknown objects locally')
     this.conversationManager?.setState('idle')
   }
 

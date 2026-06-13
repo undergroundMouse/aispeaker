@@ -114,6 +114,16 @@ export interface MultimodalDialogueResult {
   memory: ConversationMemoryState
 }
 
+export const CUSTOM_OBJECT_EVENTS = {
+  RECOGNIZED: 'vision:custom-object:recognized',
+} as const
+
+export interface CustomObjectRecognizedPayload {
+  candidate: VisionCandidate
+  answer: string
+  timestamp: number
+}
+
 export interface CustomObjectFeatureVector {
   values: number[]
   model: string

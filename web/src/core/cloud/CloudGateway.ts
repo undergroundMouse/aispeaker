@@ -13,13 +13,22 @@ import {
   findCustomObjectCandidate,
 } from '../vision/CustomObjectMemory'
 import {
+  LocalLongTermMemoryStore,
+  formatLongTermMemoryPrompt,
+} from '../memory/LongTermMemoryStore'
+import {
   CUSTOM_OBJECT_EVENTS,
   type CustomObjectFeatureExtractor,
   type CustomObjectRecord,
   type CustomObjectRecognizedPayload,
   type CustomObjectStore,
+  type LongTermMemoryConsentSettings,
+  type LongTermMemoryPromptContext,
+  type LongTermMemoryStore,
   type VisionRegion,
 } from '../vision/types'
+
+const DEFAULT_USER_ID = 'local-user'
 
 export class CloudGateway {
   private unsubscribe?: () => void
@@ -29,7 +38,12 @@ export class CloudGateway {
   private readonly languageStore?: LanguageStore
   private readonly customObjectStore: CustomObjectStore
   private readonly customObjectExtractor: CustomObjectFeatureExtractor
+  private readonly longTermMemoryStore: LongTermMemoryStore
   private lastCustomObjectId: string | null = null
+  private memoryConsent: LongTermMemoryConsentSettings = {
+    cloudMemoryAccess: false,
+    cloudSummarySync: false,
+  }
 
   constructor(
     conversationManager?: ConversationManager,
@@ -37,12 +51,14 @@ export class CloudGateway {
     languageStore?: LanguageStore,
     customObjectStore: CustomObjectStore = new LocalCustomObjectStore(),
     customObjectExtractor: CustomObjectFeatureExtractor = new PrototypeCustomObjectFeatureExtractor(),
+    longTermMemoryStore: LongTermMemoryStore = new LocalLongTermMemoryStore(),
   ) {
     this.conversationManager = conversationManager
     this.networkMonitor = networkMonitor
     this.languageStore = languageStore
     this.customObjectStore = customObjectStore
     this.customObjectExtractor = customObjectExtractor
+    this.longTermMemoryStore = longTermMemoryStore
   }
 
   start(): void {
@@ -92,6 +108,7 @@ export class CloudGateway {
 
   async submitComplexTurn(turn: VoiceTurn): Promise<void> {
     const language = this.languageStore?.getLanguage() ?? 'zh'
+    const memoryContext = await this.buildLongTermMemoryContext(turn.text)
     const customObject = await findCustomObjectCandidate({
       frame: this.latestThumbnail,
       store: this.customObjectStore,
@@ -126,8 +143,25 @@ export class CloudGateway {
 
     this.conversationManager?.setState('thinking')
     console.debug('[CloudGateway] complex turn queued', turn.turnId, turn.text)
+    if (memoryContext?.cloudAuthorized) {
+      console.debug('[CloudGateway] using authorized long-term memory context', memoryContext.promptText)
+    } else if (memoryContext) {
+      console.debug('[CloudGateway] long-term memory context kept local until user authorizes cloud access')
+    }
     console.debug('[CloudGateway] ask whether to remember unknown objects locally')
     this.conversationManager?.setState('idle')
+  }
+
+  setLongTermMemoryConsent(consent: LongTermMemoryConsentSettings): void {
+    this.memoryConsent = consent
+  }
+
+  getLongTermMemoryConsent(): LongTermMemoryConsentSettings {
+    return { ...this.memoryConsent }
+  }
+
+  getLongTermMemoryStore(): LongTermMemoryStore {
+    return this.longTermMemoryStore
   }
 
   simulateWeakNetwork(): void {
@@ -165,5 +199,24 @@ export class CloudGateway {
     anchor.click()
     URL.revokeObjectURL(url)
     return true
+  }
+
+  private async buildLongTermMemoryContext(transcript: string): Promise<LongTermMemoryPromptContext | null> {
+    if (!this.longTermMemoryStore.isAvailable()) return null
+
+    const visualLabels = this.latestThumbnail ? ['current camera frame'] : []
+    const memories = await this.longTermMemoryStore.retrieveRelevant({
+      userId: DEFAULT_USER_ID,
+      transcript,
+      visualLabels,
+      recentConversationLabels: [],
+    })
+    if (memories.length === 0) return null
+
+    return {
+      memories,
+      promptText: formatLongTermMemoryPrompt(memories),
+      cloudAuthorized: this.memoryConsent.cloudMemoryAccess,
+    }
   }
 }

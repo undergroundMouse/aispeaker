@@ -93,6 +93,7 @@ export interface CloudVisualQuestionRequest {
   frame: ThumbnailFrame | null
   localVision: LocalVisionSignals
   memory: ConversationMemoryState
+  longTermMemoryContext?: LongTermMemoryPromptContext
   language: AppLanguage
 }
 
@@ -106,12 +107,14 @@ export interface MultimodalDialogueRequest {
   networkState: NetworkState
   language: AppLanguage
   memory: ConversationMemoryState
+  longTermMemory?: LongTermMemoryTurnContext
 }
 
 export interface MultimodalDialogueResult {
   answer: VisualAnswer
   localVision: LocalVisionSignals
   memory: ConversationMemoryState
+  longTermMemoryContext?: LongTermMemoryPromptContext
 }
 
 export type LongTermMemoryType = 'preference' | 'object-location' | 'habit' | 'fact'
@@ -155,6 +158,18 @@ export interface LongTermMemoryRetrievalInput {
 export interface LongTermMemoryConsentSettings {
   cloudMemoryAccess: boolean
   cloudSummarySync: boolean
+}
+
+export interface LongTermMemoryPromptContext {
+  memories: LongTermMemoryRecord[]
+  promptText: string
+  cloudAuthorized: boolean
+}
+
+export interface LongTermMemoryTurnContext {
+  userId: string
+  store: LongTermMemoryStore
+  consent: LongTermMemoryConsentSettings
 }
 
 export interface LongTermMemorySyncSummary {

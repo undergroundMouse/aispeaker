@@ -18,6 +18,9 @@ import {
 } from '../ai/longTermMemory'
 import { MockLocalVisionAnalyzer } from '../ai/localVision'
 import { MultimodalDialogueService } from '../ai/multimodalDialogue'
+import { MockCloudVisualLanguageProvider } from '../ai/cloudVisualLanguage'
+import { CloudGateway, GatewayCloudVisualLanguageProvider } from '../gateway/cloudGateway'
+import { InMemoryConversationTelemetryStore } from '../gateway/conversationTelemetry'
 import {
   evaluateProactivePromptPolicy,
   loadProactivePromptState,
@@ -85,12 +88,20 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   const [customObjectStore] = useState(() => new LocalCustomObjectStore())
   const [customObjectFeatureExtractor] = useState(() => new PrototypeCustomObjectFeatureExtractor())
   const [longTermMemoryStore] = useState(() => new LocalLongTermMemoryStore())
+  const [telemetryStore] = useState(() => new InMemoryConversationTelemetryStore())
+  const [cloudGateway] = useState(() => new CloudGateway({ telemetryStore }))
+  const conversationIdRef = useRef(`conversation-${Date.now()}`)
   const [dialogueService] = useState(
     () =>
       new MultimodalDialogueService({
         localVisionAnalyzer: new MockLocalVisionAnalyzer(),
         customObjectStore,
         customObjectFeatureExtractor,
+        cloudProvider: new GatewayCloudVisualLanguageProvider(
+          new MockCloudVisualLanguageProvider(),
+          cloudGateway,
+          () => ({ conversationId: conversationIdRef.current }),
+        ),
       }),
   )
   const [speechController] = useState(

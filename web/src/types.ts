@@ -239,6 +239,8 @@ export interface MultimodalDialogueRequest {
   language: AppLanguage
   memory: ConversationMemoryState
   longTermMemory?: LongTermMemoryTurnContext
+  mediaPrivacy?: MediaPrivacyConsent
+  conversationId?: string
 }
 
 export interface MultimodalDialogueResult {

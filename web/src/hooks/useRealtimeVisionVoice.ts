@@ -808,6 +808,8 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         networkState,
         language,
         memory: conversationMemory,
+        mediaPrivacy: mediaPrivacyConsent,
+        conversationId: conversationIdRef.current,
         longTermMemory: {
           userId: ACTIVE_USER_ID,
           store: longTermMemoryStore,
@@ -849,6 +851,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       lastFrame,
       longTermMemoryConsent,
       longTermMemoryStore,
+      mediaPrivacyConsent,
       mediaState.cameraStatus,
       networkState,
       refreshConversationTelemetry,

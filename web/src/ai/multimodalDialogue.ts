@@ -6,11 +6,14 @@ import type {
   LongTermMemoryPromptContext,
   LocalVisionAnalyzer,
   LocalVisionSignals,
+  MediaPrivacyConsent,
   MultimodalDialogueRequest,
   MultimodalDialogueResult,
   VisualAnswer,
   VisionCandidate,
 } from '../types'
+import { stripMediaForCloud, withEphemeralFrameAsync } from '../media/ephemeralMedia'
+import { isCloudMediaTransmissionAuthorized } from '../media/mediaPrivacy'
 import { getNetworkRetryMessage } from '../voice/localCommands'
 import { emptyConversationMemory, resolveFollowUpReference, updateConversationMemory } from './conversationMemory'
 import { MockCloudVisualLanguageProvider, normalizeProviderVisualAnswer } from './cloudVisualLanguage'
@@ -60,78 +63,86 @@ export class MultimodalDialogueService {
   }
 
   async handleTurn(request: MultimodalDialogueRequest): Promise<MultimodalDialogueResult> {
-    const memory = request.memory ?? emptyConversationMemory()
-    const localVision = await this.localVisionAnalyzer.analyze({
-      frame: request.frame,
-      transcript: request.transcript,
-      language: request.language,
-    })
+    return withEphemeralFrameAsync(request.frame, async (frame) => {
+      const memory = request.memory ?? emptyConversationMemory()
+      const localVision = await this.localVisionAnalyzer.analyze({
+        frame,
+        transcript: request.transcript,
+        language: request.language,
+      })
 
-    const longTermMemoryContext = await buildLongTermMemoryContext(request, localVision)
+      const longTermMemoryContext = await buildLongTermMemoryContext(request, localVision)
 
-    const whyFollowUpAnswer = buildWhyFollowUpAnswer(request.transcript, memory, request.language)
-    if (whyFollowUpAnswer) {
-      this.recordOutcome('local-short-circuit')
-      return completeResult(whyFollowUpAnswer, localVision, memory, longTermMemoryContext)
-    }
+      const whyFollowUpAnswer = buildWhyFollowUpAnswer(request.transcript, memory, request.language)
+      if (whyFollowUpAnswer) {
+        this.recordOutcome('local-short-circuit')
+        return completeResult(whyFollowUpAnswer, localVision, memory, longTermMemoryContext)
+      }
 
-    const customObjectAnswer = await this.buildCustomObjectAnswer(request, localVision)
-    if (customObjectAnswer) {
-      this.recordOutcome('local-short-circuit')
-      return completeResult(customObjectAnswer, localVision, memory, longTermMemoryContext)
-    }
+      const customObjectAnswer = await this.buildCustomObjectAnswer({ ...request, frame }, localVision)
+      if (customObjectAnswer) {
+        this.recordOutcome('local-short-circuit')
+        return completeResult(customObjectAnswer, localVision, memory, longTermMemoryContext)
+      }
 
-    const localAnswer = buildLocalAnswer(request, localVision, longTermMemoryContext)
-    if (localAnswer) {
-      this.recordOutcome('local-short-circuit')
-      return completeResult(localAnswer, localVision, memory, longTermMemoryContext)
-    }
+      const localAnswer = buildLocalAnswer({ ...request, frame }, localVision, longTermMemoryContext)
+      if (localAnswer) {
+        this.recordOutcome('local-short-circuit')
+        return completeResult(localAnswer, localVision, memory, longTermMemoryContext)
+      }
 
-    const memoryAnswer = buildMemoryAnswer(request)
-    if (memoryAnswer) {
-      this.recordOutcome('local-short-circuit')
-      return completeResult(memoryAnswer, localVision, memory, longTermMemoryContext)
-    }
+      const memoryAnswer = buildMemoryAnswer(request)
+      if (memoryAnswer) {
+        this.recordOutcome('local-short-circuit')
+        return completeResult(memoryAnswer, localVision, memory, longTermMemoryContext)
+      }
 
-    if (request.networkState !== 'online') {
-      return completeResult(
-        finalizeVisualAnswer(
+      if (request.networkState !== 'online') {
+        return completeResult(
+          finalizeVisualAnswer(
+            {
+              kind: 'network-error',
+              answer: getNetworkRetryMessage(request.language),
+              source: 'system',
+              referencedEntities: [],
+              regions: [],
+              evidenceAvailable: false,
+              requiresSpeech: true,
+            },
+            request.language,
+          ),
+          localVision,
+          memory,
+          longTermMemoryContext,
+        )
+      }
+
+      const cloudMemoryContext = request.longTermMemory?.consent.cloudMemoryAccess
+        ? longTermMemoryContext
+        : undefined
+      const cloudFrame = resolveCloudFrame(frame, request.mediaPrivacy)
+      this.recordOutcome('cloud-invoked')
+      const cloudAnswer = await this.cloudProvider.answerVisualQuestion(
+        stripMediaForCloud(
           {
-            kind: 'network-error',
-            answer: getNetworkRetryMessage(request.language),
-            source: 'system',
-            referencedEntities: [],
-            regions: [],
-            evidenceAvailable: false,
-            requiresSpeech: true,
+            transcript: request.transcript,
+            frame: cloudFrame,
+            localVision,
+            memory,
+            longTermMemoryContext: cloudMemoryContext,
+            language: request.language,
           },
-          request.language,
+          isCloudMediaTransmissionAuthorized(request.mediaPrivacy ?? defaultCloudMediaConsent()),
         ),
+      )
+
+      return completeResult(
+        addRememberPrompt(normalizeProviderVisualAnswer(cloudAnswer, request.language), request.language),
         localVision,
         memory,
         longTermMemoryContext,
       )
-    }
-
-    const cloudMemoryContext = request.longTermMemory?.consent.cloudMemoryAccess
-      ? longTermMemoryContext
-      : undefined
-    this.recordOutcome('cloud-invoked')
-    const cloudAnswer = await this.cloudProvider.answerVisualQuestion({
-      transcript: request.transcript,
-      frame: request.frame,
-      localVision,
-      memory,
-      longTermMemoryContext: cloudMemoryContext,
-      language: request.language,
     })
-
-    return completeResult(
-      addRememberPrompt(normalizeProviderVisualAnswer(cloudAnswer, request.language), request.language),
-      localVision,
-      memory,
-      longTermMemoryContext,
-    )
   }
 
   private recordOutcome(outcome: 'local-short-circuit' | 'cloud-invoked'): void {
@@ -177,6 +188,25 @@ export class MultimodalDialogueService {
       request.language,
     )
   }
+}
+
+function defaultCloudMediaConsent(): MediaPrivacyConsent {
+  return {
+    cameraCapture: true,
+    microphoneCapture: true,
+    cloudMediaTransmission: false,
+  }
+}
+
+function resolveCloudFrame(
+  frame: MultimodalDialogueRequest['frame'],
+  consent?: MediaPrivacyConsent,
+): MultimodalDialogueRequest['frame'] {
+  if (!isCloudMediaTransmissionAuthorized(consent ?? defaultCloudMediaConsent())) {
+    return null
+  }
+
+  return frame
 }
 
 function buildLocalAnswer(

@@ -129,11 +129,19 @@ export class CloudGateway {
     return {
       ok: false,
       reason: isRetryableError(lastError) ? 'network' : 'provider-error',
-      message: NETWORK_FAILURE_MESSAGE_ZH,
+      message: resolveCloudGatewayFailureMessage(lastError),
       telemetry: telemetryBase,
       error: lastError,
     }
   }
+}
+
+function resolveCloudGatewayFailureMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim()
+  }
+
+  return NETWORK_FAILURE_MESSAGE_ZH
 }
 
 export function isRetryableError(error: unknown): boolean {

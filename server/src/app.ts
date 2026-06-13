@@ -12,7 +12,23 @@ export function createApp(config: ServerConfig, store: SqliteStore): Hono {
   const visualAnswerService = new VisualAnswerService(store, config)
   const operationsAdmin = new OperationsAdminService(store, config.adminApiToken)
 
-  app.use('*', cors({ origin: config.corsOrigin, allowHeaders: ['Authorization', 'Content-Type'] }))
+  app.use(
+    '*',
+    cors({
+      origin: (origin) => {
+        if (!origin) {
+          return config.corsOrigins[0] ?? 'http://localhost:5173'
+        }
+
+        if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+          return origin
+        }
+
+        return config.corsOrigins.includes(origin) ? origin : config.corsOrigins[0] ?? 'http://localhost:5173'
+      },
+      allowHeaders: ['Authorization', 'Content-Type'],
+    }),
+  )
 
   app.get('/health', (context) => context.json({ status: 'ok' }))
 

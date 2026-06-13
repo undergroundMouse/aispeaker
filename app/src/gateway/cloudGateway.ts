@@ -5,7 +5,7 @@ import type {
   CloudVisualQuestionRequest,
   VisualAnswer,
 } from '../types'
-import { getNetworkRetryMessage } from '../voice/localCommands'
+import { resolveCloudFailureMessage } from '../voice/cloudFailureMessages'
 import {
   createConversationTelemetryRecord,
   estimateCostFromTokens,
@@ -16,6 +16,7 @@ import { estimateRequestTokens } from './tokenEstimator'
 
 export const MAX_CLOUD_RETRIES = 2
 export const NETWORK_FAILURE_MESSAGE = '网络不佳，请重试'
+export const NETWORK_FAILURE_MESSAGE_BUDGET = '今日云端预算已用尽'
 
 export type CloudGatewayFailureReason = 'network' | 'budget-exceeded' | 'provider-error'
 
@@ -74,7 +75,7 @@ export class CloudGateway {
         return {
           ok: false,
           reason: 'budget-exceeded',
-          message: NETWORK_FAILURE_MESSAGE,
+          message: NETWORK_FAILURE_MESSAGE_BUDGET,
           estimatedTokens,
           estimatedCost,
         }
@@ -164,7 +165,7 @@ export class GatewayCloudVisualLanguageProvider implements CloudVisualLanguagePr
     if (!result.ok) {
       return {
         kind: 'network-error',
-        answer: getNetworkRetryMessage(request.language),
+        answer: resolveCloudFailureMessage(request.language, result.reason, result.message),
         source: 'system',
         referencedEntities: [],
         regions: [],

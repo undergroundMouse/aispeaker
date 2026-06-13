@@ -40,6 +40,14 @@ export function readCloudAuthorityMode(
   return readBackendClientConfig(env) ? 'server' : 'client'
 }
 
+export function buildAsrWebSocketUrl(config: BackendClientConfig): string {
+  const url = new URL(config.baseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = '/api/v1/cloud/asr/stream'
+  url.searchParams.set('token', config.deviceApiToken)
+  return url.toString()
+}
+
 export async function postCloudVisualAnswer(
   config: BackendClientConfig,
   request: CloudVisualAnswerRequest,
@@ -54,7 +62,21 @@ export async function postCloudVisualAnswer(
     body: JSON.stringify(request),
   })
 
-  return (await response.json()) as CloudVisualAnswerResponse
+  const payload = (await response.json()) as CloudVisualAnswerResponse
+  if (!response.ok) {
+    if (!payload.ok) {
+      return payload
+    }
+
+    return {
+      ok: false,
+      reason: 'network',
+      message: `Backend returned HTTP ${response.status}.`,
+      telemetry: { estimatedTokens: 0, estimatedCost: 0 },
+    }
+  }
+
+  return payload
 }
 
 export async function listAdminConversations(

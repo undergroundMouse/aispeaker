@@ -114,6 +114,85 @@ export interface MultimodalDialogueResult {
   memory: ConversationMemoryState
 }
 
+export type LongTermMemoryType = 'preference' | 'object-location' | 'habit' | 'fact'
+
+export interface LongTermMemoryRecord {
+  id: string
+  userId: string
+  type: LongTermMemoryType
+  summary: string
+  details?: string
+  subject?: string
+  value?: string
+  tags: string[]
+  strength: number
+  syncEligible: boolean
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number
+  weakenedAt?: number
+}
+
+export interface LongTermMemoryCreateInput {
+  type: LongTermMemoryType
+  summary: string
+  details?: string
+  subject?: string
+  value?: string
+  tags?: string[]
+  syncEligible?: boolean
+}
+
+export interface LongTermMemoryRetrievalInput {
+  userId: string
+  transcript: string
+  visualLabels: string[]
+  recentConversationLabels: string[]
+  now?: number
+  limit?: number
+}
+
+export interface LongTermMemoryConsentSettings {
+  cloudMemoryAccess: boolean
+  cloudSummarySync: boolean
+}
+
+export interface LongTermMemorySyncSummary {
+  id: string
+  type: LongTermMemoryType
+  summary: string
+  tags: string[]
+  lastUsedAt: number
+  strength: number
+}
+
+export interface LongTermMemoryStoreStatus {
+  available: boolean
+  message: string | null
+}
+
+export interface LongTermMemoryStore {
+  create(userId: string, input: LongTermMemoryCreateInput, now?: number): Promise<LongTermMemoryRecord>
+  correct(
+    userId: string,
+    id: string,
+    input: Partial<LongTermMemoryCreateInput>,
+    now?: number,
+  ): Promise<LongTermMemoryRecord | null>
+  list(userId: string): Promise<LongTermMemoryRecord[]>
+  delete(userId: string, id: string): Promise<boolean>
+  forgetAll(userId: string): Promise<void>
+  retrieveRelevant(input: LongTermMemoryRetrievalInput): Promise<LongTermMemoryRecord[]>
+  reinforce(userId: string, ids: string[], now?: number): Promise<void>
+  weakenStale(userId: string, now?: number): Promise<LongTermMemoryRecord[]>
+  createSyncSummaries(
+    userId: string,
+    consent: LongTermMemoryConsentSettings,
+  ): Promise<LongTermMemorySyncSummary[]>
+  isAvailable(): boolean
+  getStatus(): LongTermMemoryStoreStatus
+}
+
 export const CUSTOM_OBJECT_EVENTS = {
   RECOGNIZED: 'vision:custom-object:recognized',
   REGION_SELECTED: 'vision:custom-object:region-selected',

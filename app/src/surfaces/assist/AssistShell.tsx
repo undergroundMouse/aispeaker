@@ -9,6 +9,7 @@ import { CameraStage } from './CameraStage'
 import { DialoguePanel } from './DialoguePanel'
 import { SystemToast } from './SystemToast'
 import { TalkControls } from './TalkControls'
+import { Dither } from '../../components/Dither'
 import { getMessages } from '../../i18n'
 
 export interface AssistShellProps {
@@ -80,6 +81,17 @@ export function AssistShell({
 
   return (
     <section className="assist-shell assist-shell--split">
+      <div className="assist-dither-bg" aria-hidden="true">
+        <Dither
+          waveSpeed={0.035}
+          waveFrequency={3.4}
+          waveAmplitude={0.34}
+          waveColor={[0.64, 0.28, 1]}
+          colorNum={5}
+          pixelSize={3}
+          enableMouseInteraction={false}
+        />
+      </div>
       <AmbientChrome
         language={language}
         networkState={networkState}

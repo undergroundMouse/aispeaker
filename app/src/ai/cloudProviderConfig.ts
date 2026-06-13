@@ -4,8 +4,8 @@ export interface QwenCloudProviderConfig {
   model: string
 }
 
-export const DEFAULT_QWEN_BASE_URL = 'https://llm.wavespeed.ai/v1'
-export const DEFAULT_QWEN_MODEL = 'qwen/qwen3-vl-8b-thinking'
+export const DEFAULT_QWEN_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+export const DEFAULT_QWEN_MODEL = 'qwen-vl-plus'
 
 export function readQwenCloudProviderConfig(
   env: Record<string, string | undefined> = import.meta.env,

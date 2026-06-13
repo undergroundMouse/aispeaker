@@ -545,6 +545,44 @@ export interface MediaPrivacyConsent {
   cloudMediaTransmission: boolean
 }
 
+export interface CloudGatewayRequestContext {
+  conversationId: string
+}
+
+export interface CloudGatewaySuccessResult<T> {
+  ok: true
+  value: T
+  estimatedTokens: number
+  actualTokens?: number
+  estimatedCost: number
+}
+
+export interface CloudGatewayFailureResult {
+  ok: false
+  reason: 'network' | 'budget-exceeded' | 'provider-error'
+  message: string
+  estimatedTokens: number
+  estimatedCost: number
+  error?: unknown
+}
+
+export type CloudGatewayResult<T> = CloudGatewaySuccessResult<T> | CloudGatewayFailureResult
+
+export interface ConversationTelemetryRecord {
+  conversationId: string
+  estimatedTokens: number
+  actualTokens?: number
+  estimatedCost: number
+  requestCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface OperationsBudgetConfig {
+  dailyBudgetCap: number | null
+  updatedAt: number
+}
+
 export type NetworkState = 'online' | 'weak' | 'offline'
 
 export type DialogueTrigger = 'push-to-talk' | 'wake-word'

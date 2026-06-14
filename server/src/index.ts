@@ -4,6 +4,8 @@ import { createApp } from './app.js'
 import { loadServerConfig } from './config.js'
 import { SqliteStore } from './db/store.js'
 import { attachAsrStreamWebSocket } from './routes/asrStream.js'
+import { attachOmniRealtimeWebSocket } from './routes/omniRealtimeProxy.js'
+import { attachRealtimeSessionWebSocket } from './routes/realtimeSession.js'
 
 loadServerEnvFile()
 
@@ -16,6 +18,8 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 })
 
 attachAsrStreamWebSocket(server, config)
+attachOmniRealtimeWebSocket(server, config)
+attachRealtimeSessionWebSocket(server, config)
 
 process.on('SIGINT', () => {
   store.close()

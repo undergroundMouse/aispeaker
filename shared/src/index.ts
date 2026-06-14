@@ -122,11 +122,17 @@ export type CloudAuthorityMode = 'client' | 'shadow' | 'server'
 export const API_ROUTES = {
   health: '/health',
   cloudVisualAnswer: '/api/v1/cloud/visual-answer',
+  realtimeSession: '/api/v1/realtime/session',
+  omniRealtime: '/api/v1/realtime/omni',
   adminConversations: '/api/v1/admin/conversations',
   adminConversation: '/api/v1/admin/conversations/:conversationId',
   adminBudget: '/api/v1/admin/budget',
   adminDailySpend: '/api/v1/admin/daily-spend',
+  adminSessionHealth: '/api/v1/admin/session-health',
 } as const
+
+export * from './realtimeSession.js'
+export * from './omniRealtimeSession.js'
 
 export const BUDGET_EXCEEDED_MESSAGE_ZH = '今日云端预算已用尽'
 export const NETWORK_FAILURE_MESSAGE_ZH = '网络不佳，请重试'

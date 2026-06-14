@@ -13,6 +13,7 @@ import {
   type ConversationTelemetryStore,
 } from './conversationTelemetry'
 import { estimateRequestTokens } from './tokenEstimator'
+import { recordOmniSessionUsage, recordVlVerifyUsage } from './omniTelemetry'
 
 export const MAX_CLOUD_RETRIES = 2
 export const NETWORK_FAILURE_MESSAGE = '网络不佳，请重试'
@@ -41,6 +42,8 @@ export class CloudGateway {
   private readonly costPerThousandTokens: number
   private readonly sleep: (ms: number) => Promise<void>
 
+  private sessionDailySpend = new Map<string, number>()
+
   constructor({
     telemetryStore,
     dailyBudgetCap,
@@ -59,6 +62,40 @@ export class CloudGateway {
 
   getTelemetryStore(): ConversationTelemetryStore {
     return this.telemetryStore
+  }
+
+  getSessionSpend(sessionId: string): number {
+    return this.sessionDailySpend.get(sessionId) ?? 0
+  }
+
+  addSessionSpend(sessionId: string, cost: number): void {
+    this.sessionDailySpend.set(sessionId, (this.sessionDailySpend.get(sessionId) ?? 0) + cost)
+  }
+
+  recordOmniSessionUsage(input: {
+    conversationId: string
+    durationMs: number
+    estimatedTokens?: number
+  }): void {
+    recordOmniSessionUsage(this.telemetryStore, {
+      conversationId: input.conversationId,
+      durationMs: input.durationMs,
+      estimatedTokens: input.estimatedTokens,
+      costPerThousandTokens: this.costPerThousandTokens,
+    })
+  }
+
+  recordVlVerifyUsage(input: {
+    conversationId: string
+    estimatedTokens: number
+    actualTokens?: number
+  }): void {
+    recordVlVerifyUsage(this.telemetryStore, {
+      conversationId: input.conversationId,
+      estimatedTokens: input.estimatedTokens,
+      actualTokens: input.actualTokens,
+      costPerThousandTokens: this.costPerThousandTokens,
+    })
   }
 
   async invoke<T>(input: CloudGatewayInvokeInput<T>): Promise<CloudGatewayResult<T>> {

@@ -48,6 +48,30 @@ export function buildAsrWebSocketUrl(config: BackendClientConfig): string {
   return url.toString()
 }
 
+export function buildRealtimeSessionWebSocketUrl(
+  config: BackendClientConfig,
+  forceWss = import.meta.env.PROD,
+): string {
+  const url = new URL(config.baseUrl)
+  const useWss = forceWss || url.protocol === 'https:'
+  url.protocol = useWss ? 'wss:' : 'ws:'
+  url.pathname = '/api/v1/realtime/session'
+  url.searchParams.set('token', config.deviceApiToken)
+  return url.toString()
+}
+
+export function buildOmniRealtimeWebSocketUrl(
+  config: BackendClientConfig,
+  forceWss = import.meta.env.PROD,
+): string {
+  const url = new URL(config.baseUrl)
+  const useWss = forceWss || url.protocol === 'https:'
+  url.protocol = useWss ? 'wss:' : 'ws:'
+  url.pathname = '/api/v1/realtime/omni'
+  url.searchParams.set('token', config.deviceApiToken)
+  return url.toString()
+}
+
 export async function postCloudVisualAnswer(
   config: BackendClientConfig,
   request: CloudVisualAnswerRequest,

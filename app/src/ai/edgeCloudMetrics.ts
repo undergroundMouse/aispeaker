@@ -28,6 +28,7 @@ export type CloudRoutingOutcome = 'local-short-circuit' | 'cloud-invoked'
 export interface EdgeCloudMetricsSession {
   cloudInvocations: number
   localShortCircuits: number
+  sessionModeInvocations: number
   outcomes: CloudRoutingOutcome[]
 }
 
@@ -35,8 +36,13 @@ export function createEdgeCloudMetricsSession(): EdgeCloudMetricsSession {
   return {
     cloudInvocations: 0,
     localShortCircuits: 0,
+    sessionModeInvocations: 0,
     outcomes: [],
   }
+}
+
+export function recordSessionCloudInvocation(session: EdgeCloudMetricsSession): EdgeCloudMetricsSession {
+  return { ...session, sessionModeInvocations: session.sessionModeInvocations + 1 }
 }
 
 export function recordCloudRoutingOutcome(

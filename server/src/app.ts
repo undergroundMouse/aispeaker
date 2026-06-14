@@ -6,6 +6,9 @@ import { createAdminAuth, createDeviceAuth } from './middleware/auth.js'
 import { OperationsAdminService } from './services/operationsAdminService.js'
 import { VisualAnswerService } from './services/visualAnswerService.js'
 import type { CloudVisualAnswerRequest } from '@ai/shared'
+import { getSessionStateStore } from './routes/realtimeSession.js'
+import { getAllCircuitBreakerStates } from './observability/circuitBreaker.js'
+import { getProviderSuccessRate } from './observability/metrics.js'
 
 export function createApp(config: ServerConfig, store: SqliteStore): Hono {
   const app = new Hono()
@@ -76,6 +79,17 @@ export function createApp(config: ServerConfig, store: SqliteStore): Hono {
   admin.get('/daily-spend', (context) => {
     const token = context.req.header('Authorization')!.slice(7)
     return context.json({ amount: operationsAdmin.getDailySpend(token) })
+  })
+
+  admin.get('/session-health', (context) => {
+    const token = context.req.header('Authorization')!.slice(7)
+    void token
+    return context.json({
+      activeSessions: getSessionStateStore().countActive(),
+      circuitBreakers: getAllCircuitBreakerStates(),
+      asrSuccessRate: getProviderSuccessRate('asr'),
+      omniSuccessRate: getProviderSuccessRate('omni-realtime'),
+    })
   })
 
   app.route('/api/v1/admin', admin)

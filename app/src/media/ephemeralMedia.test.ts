@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { releaseSampledVideoFrame, stripMediaForCloud, withEphemeralFrame } from './ephemeralMedia'
+import {
+  cloneSampledVideoFrame,
+  releaseSampledVideoFrame,
+  stripMediaForCloud,
+  withEphemeralFrame,
+  withEphemeralFrameAsync,
+} from './ephemeralMedia'
 import type { SampledVideoFrame } from '../types'
 
 function createFrame(): SampledVideoFrame {
@@ -19,10 +25,24 @@ describe('ephemeralMedia', () => {
     expect(frame.blob).toBeNull()
   })
 
-  it('releases frame after synchronous processing', () => {
+  it('releases cloned frame after synchronous processing without mutating source frame', () => {
     const frame = createFrame()
     withEphemeralFrame(frame, (current) => current?.width ?? 0)
-    expect(frame.blob).toBeNull()
+    expect(frame.blob).not.toBeNull()
+  })
+
+  it('releases cloned frame after async processing without mutating source frame', async () => {
+    const frame = createFrame()
+    await withEphemeralFrameAsync(frame, async (current) => current?.width ?? 0)
+    expect(frame.blob).not.toBeNull()
+  })
+
+  it('clones sampled frames before ephemeral release', () => {
+    const frame = createFrame()
+    const clone = cloneSampledVideoFrame(frame)
+    expect(clone).not.toBe(frame)
+    expect(clone.blob).not.toBe(frame.blob)
+    expect(clone.width).toBe(frame.width)
   })
 
   it('strips media from cloud payloads when unauthorized', () => {

@@ -10,8 +10,8 @@ export interface VideoFrameSamplerOptions {
 export class VideoFrameSampler {
   private readonly video: HTMLVideoElement
   private readonly onFrame: (frame: SampledVideoFrame) => void
-  private readonly normalIntervalMs: number
-  private readonly reducedIntervalMs: number
+  private normalIntervalMs: number
+  private reducedIntervalMs: number
   private readonly canvas = document.createElement('canvas')
   private timerId: number | null = null
   private mode: SamplingMode = 'paused'
@@ -53,6 +53,14 @@ export class VideoFrameSampler {
 
   getMode(): SamplingMode {
     return this.mode
+  }
+
+  setIntervals(normalIntervalMs: number, reducedIntervalMs: number): void {
+    this.normalIntervalMs = normalIntervalMs
+    this.reducedIntervalMs = reducedIntervalMs
+    if (this.mode !== 'paused') {
+      this.setMode(this.mode)
+    }
   }
 
   private captureFrame(): void {

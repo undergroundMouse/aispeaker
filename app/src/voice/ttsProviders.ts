@@ -174,17 +174,9 @@ export class MockStreamingTtsProvider implements TtsProvider {
   }
 }
 
-export class CloudStreamingTtsProvider extends MockStreamingTtsProvider {
-  constructor(available = false) {
-    super({
-      kind: 'cloud-streaming',
-      available,
-      local: false,
-      supportsStreaming: true,
-      naturalnessMos: 4.4,
-    })
-  }
-}
+import { CloudStreamingTtsProvider } from './cloudStreamingTtsProvider'
+
+export { CloudStreamingTtsProvider }
 
 export function selectTtsProvider({
   providers,

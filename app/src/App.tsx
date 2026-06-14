@@ -53,6 +53,8 @@ function App() {
     setCameraCaptureConsent,
     setMicrophoneCaptureConsent,
     setCloudMediaTransmissionConsent,
+    setHybridOmniDialogueEnabled,
+    setOmniPureDialogueEnabled,
     setDailyBudgetCap,
     mediaPrivacyConsent,
     edgeCloudMetrics,
@@ -61,6 +63,11 @@ function App() {
     exportLongTermMemoriesToFile,
     exportCustomObjectsToFile,
     getDailySpend,
+    sessionStatus,
+    omniSessionStatus,
+    hybridVoicePath,
+    omniFallbackReason,
+    featureFlags,
   } = useRealtimeVisionVoice()
 
   const memoryBadgeCount = useMemo(() => {
@@ -118,6 +125,10 @@ function App() {
         dailySpend={getDailySpend()}
         cloudReductionPercent={Math.round((1 - edgeCloudMetrics.cloudInvocations / 10) * 100)}
         conversationTelemetry={conversationTelemetry}
+        sessionStatus={sessionStatus}
+        omniSessionStatus={omniSessionStatus}
+        hybridVoicePath={hybridVoicePath}
+        omniFallbackReason={omniFallbackReason}
         onBack={() => navigateToRoute('assist')}
         onSetBudgetCap={(cap) => setDailyBudgetCap(cap)}
         onClearBudgetCap={() => setDailyBudgetCap(null)}
@@ -189,6 +200,16 @@ function App() {
           focusSection={settingsFocusSection}
           mediaPrivacyConsent={mediaPrivacyConsent}
           longTermMemoryConsent={longTermMemoryConsent}
+          sessionStatus={sessionStatus}
+          omniSessionStatus={omniSessionStatus}
+          hybridOmniDialogueEnabled={featureFlags.hybridOmniDialogue}
+          omniPureDialogueEnabled={featureFlags.omniPureDialogue}
+          hybridOmniBuildEnabled={featureFlags.hybridOmniBuildEnabled}
+          hybridVoicePath={hybridVoicePath}
+          omniFallbackReason={omniFallbackReason}
+          omniVlCorrectionMode={featureFlags.omniVlCorrectionMode}
+          onHybridOmniDialogueChange={setHybridOmniDialogueEnabled}
+          onOmniPureDialogueChange={setOmniPureDialogueEnabled}
           onClose={closeSettings}
           onWatchOnlyChange={setWatchOnly}
           onCameraConsentChange={setCameraCaptureConsent}

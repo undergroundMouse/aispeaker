@@ -9,6 +9,11 @@ export type SurfaceMessages = {
   speechNotDetected: string
   retryNetwork: string
   watchOnly: string
+  enableHybridOmniDialogue: string
+  enableOmniPureDialogue: string
+  omniPureDialogueHint: string
+  hybridOmniCloudMediaHint: string
+  hybridOmniBuildDisabledHint: string
   cameraUnavailable: string
   mediaInitializing: string
   microphoneUnavailable: string
@@ -130,6 +135,11 @@ export const messages = {
     speechNotDetected: '没有识别到语音，请再试一次。',
     retryNetwork: '网络不佳，请重试',
     watchOnly: '只看不对话',
+    enableHybridOmniDialogue: '连续视觉对话（Omni）',
+    enableOmniPureDialogue: '纯 Omni Realtime（仅连续对话）',
+    omniPureDialogueHint: '不回退 legacy/PTT 管道，视觉走 Omni 原生关键帧，不调用 HTTP 视觉校验。',
+    hybridOmniCloudMediaHint: '开启「云端传图」后，Omni 可接收摄像头关键帧。',
+    hybridOmniBuildDisabledHint: '当前构建已禁用 Hybrid Omni，请联系管理员。',
     cameraUnavailable: '摄像头不可用',
     mediaInitializing: '正在初始化摄像头和麦克风…',
     microphoneUnavailable: '麦克风不可用',
@@ -251,6 +261,11 @@ export const messages = {
     speechNotDetected: 'No speech detected. Please try again.',
     retryNetwork: 'Network is poor. Please try again.',
     watchOnly: 'Watch-only',
+    enableHybridOmniDialogue: 'Continuous vision dialogue (Omni)',
+    enableOmniPureDialogue: 'Pure Omni Realtime (continuous only)',
+    omniPureDialogueHint: 'Stay on Omni without legacy/PTT fallback; vision uses Omni key frames only.',
+    hybridOmniCloudMediaHint: 'Enable cloud media transmission so Omni receives camera key frames.',
+    hybridOmniBuildDisabledHint: 'Hybrid Omni is disabled in this build.',
     cameraUnavailable: 'Camera unavailable',
     mediaInitializing: 'Initializing camera and microphone…',
     microphoneUnavailable: 'Microphone unavailable',

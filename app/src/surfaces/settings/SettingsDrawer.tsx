@@ -18,6 +18,16 @@ export interface SettingsDrawerProps {
   focusSection?: SettingsFocusSection
   mediaPrivacyConsent: MediaPrivacyConsent
   longTermMemoryConsent: LongTermMemoryConsentSettings
+  sessionStatus?: string
+  omniSessionStatus?: string
+  hybridVoicePath?: string
+  omniFallbackReason?: string | null
+  omniVlCorrectionMode?: string
+  hybridOmniDialogueEnabled: boolean
+  omniPureDialogueEnabled: boolean
+  hybridOmniBuildEnabled?: boolean
+  onHybridOmniDialogueChange: (enabled: boolean) => void
+  onOmniPureDialogueChange: (enabled: boolean) => void
   onClose: () => void
   onWatchOnlyChange: (enabled: boolean) => void
   onCameraConsentChange: (enabled: boolean) => void
@@ -35,6 +45,16 @@ export function SettingsDrawer({
   focusSection = null,
   mediaPrivacyConsent,
   longTermMemoryConsent,
+  sessionStatus,
+  omniSessionStatus,
+  hybridVoicePath,
+  omniFallbackReason,
+  omniVlCorrectionMode,
+  hybridOmniDialogueEnabled,
+  omniPureDialogueEnabled,
+  hybridOmniBuildEnabled = true,
+  onHybridOmniDialogueChange,
+  onOmniPureDialogueChange,
   onClose,
   onWatchOnlyChange,
   onCameraConsentChange,
@@ -70,6 +90,7 @@ export function SettingsDrawer({
           </button>
         </header>
 
+        <div className="settings-drawer__content">
         <section
           ref={privacySectionRef}
           className={['settings-drawer__section', focusSection === 'privacy' ? 'settings-drawer__section--focused' : '']
@@ -112,10 +133,62 @@ export function SettingsDrawer({
             />
             {text.authorizeCloudMedia}
           </label>
+          {sessionStatus ? (
+            <p className="settings-hint">
+              {language === 'zh' ? 'Legacy 会话' : 'Legacy session'}: {sessionStatus}
+            </p>
+          ) : null}
+          {hybridOmniDialogueEnabled ? (
+            <p className="settings-hint">
+              {language === 'zh' ? '视觉纠错策略' : 'Visual correction policy'}: {omniVlCorrectionMode ?? 'ui-only'}
+            </p>
+          ) : null}
         </section>
 
         <section>
           <h3>{text.settingsDialogue}</h3>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={hybridOmniDialogueEnabled}
+              disabled={!hybridOmniBuildEnabled}
+              onChange={(event) => onHybridOmniDialogueChange(event.target.checked)}
+            />
+            {text.enableHybridOmniDialogue}
+          </label>
+          {!hybridOmniBuildEnabled ? (
+            <p className="settings-hint">{text.hybridOmniBuildDisabledHint}</p>
+          ) : null}
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={omniPureDialogueEnabled}
+              disabled={!hybridOmniBuildEnabled || !hybridOmniDialogueEnabled}
+              onChange={(event) => onOmniPureDialogueChange(event.target.checked)}
+            />
+            {text.enableOmniPureDialogue}
+          </label>
+          {hybridOmniDialogueEnabled && omniPureDialogueEnabled ? (
+            <p className="settings-hint">{text.omniPureDialogueHint}</p>
+          ) : null}
+          {hybridOmniDialogueEnabled && !mediaPrivacyConsent.cloudMediaTransmission ? (
+            <p className="settings-hint">{text.hybridOmniCloudMediaHint}</p>
+          ) : null}
+          {hybridOmniDialogueEnabled ? (
+            <p className="settings-hint">
+              {language === 'zh' ? 'Omni 会话' : 'Omni session'}: {omniSessionStatus ?? 'disconnected'}
+            </p>
+          ) : null}
+          {hybridOmniDialogueEnabled ? (
+            <p className="settings-hint">
+              {language === 'zh' ? '语音路径' : 'Voice path'}: {hybridVoicePath ?? 'omni'}
+            </p>
+          ) : null}
+          {hybridOmniDialogueEnabled && omniFallbackReason ? (
+            <p className="settings-hint">
+              {language === 'zh' ? '回退原因' : 'Fallback reason'}: {omniFallbackReason}
+            </p>
+          ) : null}
           <label className="toggle-row">
             <input
               type="checkbox"
@@ -145,6 +218,7 @@ export function SettingsDrawer({
             {text.enableSummarySync}
           </label>
         </section>
+        </div>
       </aside>
     </div>
   )

@@ -639,6 +639,9 @@ export interface ConversationTelemetryRecord {
   requestCount: number
   createdAt: number
   updatedAt: number
+  omniSessionDurationMs?: number
+  omniEstimatedTokens?: number
+  vlVerifyRequestCount?: number
 }
 
 export interface OperationsBudgetConfig {

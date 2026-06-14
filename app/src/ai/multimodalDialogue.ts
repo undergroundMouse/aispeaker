@@ -24,13 +24,7 @@ import {
 } from './customObjects'
 import { recordCloudRoutingOutcome, type EdgeCloudMetricsSession } from './edgeCloudMetrics'
 import { formatLongTermMemoryPrompt } from './longTermMemory'
-import {
-  defaultLocalVisionThresholds,
-  getTopCandidate,
-  getTopGesture,
-  isObjectQuestion,
-  isSceneQuestion,
-} from './localVision'
+import { defaultLocalVisionThresholds, getTopCandidate, getTopGesture, isObjectQuestion, isSceneQuestion, isVisualQuestion } from './localVision'
 import { buildWhyFollowUpAnswer, finalizeVisualAnswer } from './visualEvidence'
 
 export interface MultimodalDialogueServiceOptions {
@@ -104,6 +98,33 @@ export class MultimodalDialogueService {
               kind: 'network-error',
               answer: getUnavailableCloudMessage(request.language, request.networkState),
               source: 'system',
+              referencedEntities: [],
+              regions: [],
+              evidenceAvailable: false,
+              requiresSpeech: true,
+            },
+            request.language,
+          ),
+          localVision,
+          memory,
+          longTermMemoryContext,
+        )
+      }
+
+      const normalizedTranscript = request.transcript.trim().toLocaleLowerCase()
+      const visualQuestion = isVisualQuestion(normalizedTranscript)
+
+      if (visualQuestion && !localVision.shouldUseCloud) {
+        this.recordOutcome('local-short-circuit')
+        return completeResult(
+          finalizeVisualAnswer(
+            {
+              kind: 'clarification',
+              answer:
+                request.language === 'zh'
+                  ? '本地视觉已足够回答，但当前画面信息不足。'
+                  : 'Local vision is sufficient but current frame context is insufficient.',
+              source: 'local',
               referencedEntities: [],
               regions: [],
               evidenceAvailable: false,

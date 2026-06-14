@@ -15,6 +15,12 @@ export const defaultLocalVisionThresholds: LocalVisionThresholds = {
   gestureConfidence: 0.8,
 }
 
+const PLACEHOLDER_VISION_LABELS = new Set(['object', 'scene-changed', 'tracked'])
+
+export function isPlaceholderVisionLabel(label: string): boolean {
+  return PLACEHOLDER_VISION_LABELS.has(label.trim().toLocaleLowerCase())
+}
+
 export interface MockLocalVisionAnalyzerOptions {
   thresholds?: Partial<LocalVisionThresholds>
   sceneCandidates?: VisionCandidate[]
@@ -71,7 +77,10 @@ export function getTopCandidate(
 ): VisionCandidate | null {
   return (
     candidates
-      .filter((candidate) => candidate.confidence >= threshold)
+      .filter(
+        (candidate) =>
+          candidate.confidence >= threshold && !isPlaceholderVisionLabel(candidate.label),
+      )
       .sort((left, right) => right.confidence - left.confidence)[0] ?? null
   )
 }

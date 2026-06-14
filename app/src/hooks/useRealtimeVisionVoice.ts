@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatSpeechCaptureError, getMessages } from '../i18n'
 import { InMemoryOperationsAdmin } from '../admin/operationsAdmin'
-import { emptyConversationMemory } from '../ai/conversationMemory'
+import { emptyConversationMemory, updateConversationMemory } from '../ai/conversationMemory'
 import {
   LocalCustomObjectStore,
   PrototypeCustomObjectFeatureExtractor,
@@ -26,6 +26,34 @@ import {
 } from '../ai/longTermMemory'
 import { createEdgeCloudMetricsSession, recordCloudRoutingOutcome } from '../ai/edgeCloudMetrics'
 import { MockLocalVisionAnalyzer, isVisualQuestion } from '../ai/localVision'
+import { ContinuousVisionAnalyzer } from '../vision/continuousVisionAnalyzer'
+import { readRealtimeFeatureFlags } from '../config/featureFlags'
+import {
+  loadHybridDialoguePreference,
+  loadOmniPureDialoguePreference,
+  saveHybridDialoguePreference,
+  saveOmniPureDialoguePreference,
+} from '../config/hybridDialoguePreference'
+import { RealtimeSessionClient } from '../realtime/realtimeSessionClient'
+import { OmniRealtimeClient } from '../realtime/omniRealtimeClient'
+import type { OmniSessionStatus, RealtimeSessionStatus, VisionDelta } from '@ai/shared'
+import { framePolicyToOmniKeyFrameIntervalMs, framePolicyToSamplingInterval } from '../routing/adaptiveEdgeCloudRouter'
+import { HybridVisualOrchestrator } from '../orchestration/hybridVisualOrchestrator'
+import {
+  resolveInitialHybridVoicePath,
+  resolveNextHybridVoicePath,
+  shouldStartLegacySession,
+  shouldStartOmniSession,
+  OMNI_RECOVERABLE_FAILURE_THRESHOLD,
+  type HybridVoicePath,
+} from '../orchestration/hybridDialogueFallback'
+import {
+  buildVisualCorrectionInstruction,
+  shouldSpeakVisualCorrection,
+  visualAnswersMateriallyDiffer,
+} from '../orchestration/visualCorrectionPolicy'
+import { FullDuplexController } from '../voice/fullDuplexController'
+import { startPcm16Capture, type PcmAudioCaptureSession } from '../voice/pcmAudioCapture'
 import { MultimodalDialogueService } from '../ai/multimodalDialogue'
 import { createCloudVisualLanguageProvider } from '../ai/createCloudVisualLanguageProvider'
 import {
@@ -50,7 +78,8 @@ import {
 } from '../ai/proactivePrompts'
 import { VideoFrameSampler } from '../ai/videoFrameSampler'
 import { buildSpeakableAnswerText, createActiveVisualEvidence, isVisualEvidenceExpired } from '../ai/visualEvidence'
-import { releaseSampledVideoFrame } from '../media/ephemeralMedia'
+import { releaseSampledVideoFrame, frameBlobToBase64 } from '../media/ephemeralMedia'
+import { createFallbackFrame, resolveTurnFrame } from '../media/captureVideoFrame'
 import { emptyMediaCaptureState, requestMediaCapture, stopMediaCapture } from '../media/mediaCapture'
 import {
   loadMediaPrivacyConsent,
@@ -96,7 +125,8 @@ import {
   getWeakNetworkCloudMessage,
 } from '../voice/cloudFailureMessages'
 import { detectSystemFailureVariant } from '../surfaces/conversationEntry'
-import { CloudStreamingTtsProvider, WebSpeechTtsProvider } from '../voice/ttsProviders'
+import { CloudStreamingTtsProvider as RealCloudStreamingTtsProvider } from '../voice/cloudStreamingTtsProvider'
+import { WebSpeechTtsProvider } from '../voice/ttsProviders'
 import { MockAsrProvider, WebSpeechAsrProvider, CloudStreamingAsrProvider } from '../voice/asrProviders'
 import { SpeechCaptureController } from '../voice/speechCaptureController'
 import { buildStreamingPreviewSegments } from '../surfaces/assist/buildCaptionTurns'
@@ -132,6 +162,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   const [edgeCloudMetrics, setEdgeCloudMetrics] = useState(createEdgeCloudMetricsSession)
   const [conversationTelemetry, setConversationTelemetry] = useState<ConversationTelemetryRecord[]>([])
   const [dailySpend, setDailySpend] = useState(0)
+  const dailySpendRef = useRef(dailySpend)
   const [mediaPrivacyConsent, setMediaPrivacyConsent] = useState<MediaPrivacyConsent>(() => {
     const consent = loadMediaPrivacyConsent()
     mediaPrivacyConsentRef.current = consent
@@ -148,10 +179,100 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       },
     })),
   )
+  const [hybridOmniDialogueUserEnabled, setHybridOmniDialogueUserEnabled] = useState(() =>
+    import.meta.env.MODE === 'test' ? false : loadHybridDialoguePreference(),
+  )
+  const [omniPureDialogueUserEnabled, setOmniPureDialogueUserEnabled] = useState(() =>
+    import.meta.env.MODE === 'test' ? false : loadOmniPureDialoguePreference(),
+  )
+  const featureFlags = useMemo(
+    () =>
+      readRealtimeFeatureFlags(
+        import.meta.env,
+        hybridOmniDialogueUserEnabled,
+        omniPureDialogueUserEnabled,
+      ),
+    [hybridOmniDialogueUserEnabled, omniPureDialogueUserEnabled],
+  )
+  const [continuousVisionAnalyzer] = useState(() => new ContinuousVisionAnalyzer())
+  const lastFrameRef = useRef<SampledVideoFrame | null>(null)
+  const turnFrameRef = useRef<SampledVideoFrame | null>(null)
+  const lastVisionDeltaRef = useRef<VisionDelta | null>(null)
+  const speechControllerRef = useRef<SpeechResponseController | null>(null)
+  const handleTranscriptRef = useRef<(transcript: string) => void>(() => {})
+  const sessionClientRef = useRef<RealtimeSessionClient | null>(null)
+  const omniClientRef = useRef<OmniRealtimeClient | null>(null)
+  const omniPcmCaptureRef = useRef<PcmAudioCaptureSession | null>(null)
+  const [sessionStatus, setSessionStatus] = useState<RealtimeSessionStatus>('disconnected')
+  const [omniSessionStatus, setOmniSessionStatus] = useState<OmniSessionStatus>('disconnected')
+  const [hybridVoicePath, setHybridVoicePath] = useState<HybridVoicePath>(() =>
+    resolveInitialHybridVoicePath(featureFlags.hybridOmniDialogue),
+  )
+  const [omniFallbackReason, setOmniFallbackReason] = useState<string | null>(null)
+  const hybridVoicePathRef = useRef(hybridVoicePath)
+  const omniFailureCountRef = useRef(0)
+  const omniSessionStartedAtRef = useRef<number | null>(null)
+  const assistantTranscriptRef = useRef('')
+  useEffect(() => {
+    hybridVoicePathRef.current = hybridVoicePath
+  }, [hybridVoicePath])
+
+  useEffect(() => {
+    if (featureFlags.hybridOmniDialogue) {
+      setHybridVoicePath('omni')
+      setOmniFallbackReason(null)
+      omniFailureCountRef.current = 0
+      return
+    }
+
+    setHybridVoicePath('push-to-talk')
+    setOmniFallbackReason(null)
+    omniFailureCountRef.current = 0
+    omniClientRef.current?.disconnect()
+  }, [featureFlags.hybridOmniDialogue])
+
+  const applyOmniFailure = useCallback((code: string, message: string, recoverable: boolean) => {
+    if (!recoverable) {
+      omniFailureCountRef.current = OMNI_RECOVERABLE_FAILURE_THRESHOLD
+    } else {
+      omniFailureCountRef.current += 1
+    }
+
+    const nextPath = resolveNextHybridVoicePath(
+      hybridVoicePathRef.current,
+      {
+        type: 'omni-error',
+        recoverable,
+        failureCount: omniFailureCountRef.current,
+      },
+      { omniPureMode: featureFlags.omniPureDialogue },
+    )
+
+    if (nextPath !== hybridVoicePathRef.current) {
+      setHybridVoicePath(nextPath)
+      omniClientRef.current?.disconnect()
+    }
+
+    if (hybridVoicePathRef.current === 'omni' || nextPath !== hybridVoicePathRef.current) {
+      setOmniFallbackReason(`${code}: ${message}`)
+    }
+  }, [featureFlags.omniPureDialogue])
+  const [routeTier, setRouteTier] = useState<string | null>(null)
+  const [fullDuplexController] = useState(
+    () =>
+      new FullDuplexController({
+        onBargeIn: () => {
+          speechControllerRef.current?.cancel('user-interrupt')
+          sessionClientRef.current?.sendBargeIn('user-speech')
+        },
+      }),
+  )
   const [dialogueService] = useState(
     () =>
       new MultimodalDialogueService({
-        localVisionAnalyzer: new MockLocalVisionAnalyzer(),
+        localVisionAnalyzer: featureFlags.visionLevel3Enabled
+          ? continuousVisionAnalyzer
+          : new MockLocalVisionAnalyzer(),
         customObjectStore,
         customObjectFeatureExtractor,
         cloudProvider: cloudProviderSetup.useClientGateway
@@ -169,13 +290,26 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         },
       }),
   )
+  const hybridOrchestrator = useMemo(
+    () =>
+      new HybridVisualOrchestrator({
+        dialogueService,
+        getFrame: () => turnFrameRef.current ?? lastFrameRef.current,
+        getVisionDelta: () => lastVisionDeltaRef.current,
+      }),
+    [dialogueService],
+  )
   const [speechController] = useState(
     () =>
       new SpeechResponseController([
-        new CloudStreamingTtsProvider(false),
+        new RealCloudStreamingTtsProvider({
+          getBackendConfig: () => backendConfig,
+          isEnabled: () => featureFlags.fullDuplexEnabled && Boolean(backendConfig),
+        }),
         new WebSpeechTtsProvider(),
       ]),
   )
+  speechControllerRef.current = speechController
   const preferMockAsr = import.meta.env.MODE === 'test'
   const [speechCaptureController] = useState(
     () =>
@@ -234,6 +368,18 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
   const [conversationMemory, setConversationMemory] = useState<ConversationMemoryState>(() =>
     emptyConversationMemory(),
   )
+  const conversationMemoryRef = useRef(conversationMemory)
+  const networkStateRef = useRef(networkState)
+  useEffect(() => {
+    conversationMemoryRef.current = conversationMemory
+  }, [conversationMemory])
+  useEffect(() => {
+    networkStateRef.current = networkState
+  }, [networkState])
+
+  useEffect(() => {
+    dailySpendRef.current = dailySpend
+  }, [dailySpend])
   const [feedback, setFeedback] = useState<string>('')
   const [dialogueSegments, setDialogueSegments] = useState<DialogueResponseSegment[]>([])
   const [asrState, setAsrState] = useState<AsrCaptureState>(() => speechCaptureController.getState())
@@ -418,10 +564,373 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       return
     }
 
-    wakeDetector.start(() => startDialogue('wake-word'))
+    wakeDetector.start(() => {
+      startDialogue('wake-word')
+      if (shouldStartOmniSession(featureFlags.hybridOmniDialogue, hybridVoicePathRef.current)) {
+        setLastDialogueAt(Date.now())
+        setAsrState((prev) => ({ ...prev, status: 'listening', interimText: '' }))
+        return
+      }
+
+      if (featureFlags.realtimeSessionMode && featureFlags.fullDuplexEnabled) {
+        fullDuplexController.startListening()
+        const turnId = `turn-${Date.now()}`
+        speechCaptureController.start({ turnId, language, preferMock: preferMockAsr })
+      }
+    })
 
     return () => wakeDetector.stop()
-  }, [startDialogue, wakeDetector])
+  }, [
+    featureFlags.fullDuplexEnabled,
+    featureFlags.hybridOmniDialogue,
+    featureFlags.realtimeSessionMode,
+    fullDuplexController,
+    language,
+    preferMockAsr,
+    speechCaptureController,
+    startDialogue,
+    wakeDetector,
+  ])
+
+  useEffect(() => {
+    if (
+      !backendConfig ||
+      !shouldStartLegacySession(featureFlags.hybridOmniDialogue, featureFlags.realtimeSessionMode, hybridVoicePath)
+    ) {
+      return
+    }
+
+    const client = new RealtimeSessionClient({
+      config: backendConfig,
+      conversationId: conversationIdRef.current,
+      language,
+      privacy: {
+        cameraCapture: mediaPrivacyConsentRef.current.cameraCapture,
+        microphoneCapture: mediaPrivacyConsentRef.current.microphoneCapture,
+        cloudMediaTransmission: mediaPrivacyConsentRef.current.cloudMediaTransmission,
+      },
+      onStatusChange: setSessionStatus,
+      onAsrInterim: (text) => {
+        setAsrState((prev) => ({ ...prev, interimText: text, status: 'listening' }))
+      },
+      onAsrFinal: (text) => {
+        void handleTranscriptRef.current(text)
+      },
+      onRouteDecision: (payload) => {
+        setRouteTier(payload.tier)
+        const intervals = framePolicyToSamplingInterval(payload.framePolicy)
+        samplerRef.current?.setIntervals(intervals.normal, intervals.reduced)
+      },
+      onError: (code, message, recoverable) => {
+        if (featureFlags.hybridOmniDialogue && hybridVoicePathRef.current === 'legacy-session') {
+          const nextPath = resolveNextHybridVoicePath('legacy-session', { type: 'legacy-error' })
+          setHybridVoicePath(nextPath)
+          setOmniFallbackReason(`${code}: ${message}`)
+          if (!recoverable) {
+            client.disconnect()
+          }
+        }
+      },
+      forceWss: import.meta.env.PROD,
+    })
+
+    sessionClientRef.current = client
+    client.connect()
+
+    return () => {
+      client.disconnect()
+      sessionClientRef.current = null
+    }
+  }, [
+    backendConfig,
+    featureFlags.hybridOmniDialogue,
+    featureFlags.realtimeSessionMode,
+    hybridVoicePath,
+    language,
+  ])
+
+  useEffect(() => {
+    if (!backendConfig || !shouldStartOmniSession(featureFlags.hybridOmniDialogue, hybridVoicePath)) {
+      return
+    }
+
+    let userTranscriptBuffer = ''
+
+    const client = new OmniRealtimeClient({
+      config: backendConfig,
+      conversationId: conversationIdRef.current,
+      language,
+      onStatusChange: setOmniSessionStatus,
+      onUserTranscriptInterim: (delta) => {
+        userTranscriptBuffer += delta
+        setAsrState((prev) => ({
+          ...prev,
+          interimText: userTranscriptBuffer,
+          status: 'listening',
+        }))
+      },
+      onUserTranscriptFinal: (text) => {
+        userTranscriptBuffer = ''
+        setAsrState((prev) => ({
+          ...prev,
+          interimText: text,
+          finalText: text,
+          status: 'idle',
+        }))
+        setLastDialogueAt(Date.now())
+
+        void (async () => {
+          if (featureFlags.omniPureDialogue) {
+            setRouteTier('omni-direct')
+            return
+          }
+
+          const samplingModeForTurn = samplerRef.current?.getMode() ?? 'normal'
+          const frame = await resolveTurnFrame(
+            videoRef.current,
+            mediaStateRef.current.cameraStatus,
+            samplingModeForTurn === 'paused' ? 'normal' : samplingModeForTurn,
+          )
+          turnFrameRef.current = frame
+
+          const localVision = await continuousVisionAnalyzer.analyze({
+            frame,
+            transcript: text,
+            language,
+          })
+          setLastLocalVision(localVision)
+          setRouteTier(hybridOrchestrator.resolveTier({
+            transcript: text,
+            language,
+            networkState: networkStateRef.current,
+            localVision,
+            mediaPrivacy: mediaPrivacyConsentRef.current,
+            conversationId: conversationIdRef.current,
+            memory: conversationMemoryRef.current,
+            longTermMemory: {
+              userId: ACTIVE_USER_ID,
+              store: longTermMemoryStore,
+              consent: longTermMemoryConsentRef.current,
+            },
+            dailyBudgetRemaining: dailySpendRef.current,
+            dailyBudgetCap: null,
+          }))
+
+          const enrichment = await hybridOrchestrator.enrichTurn({
+            transcript: text,
+            language,
+            networkState: networkStateRef.current,
+            localVision,
+            mediaPrivacy: mediaPrivacyConsentRef.current,
+            conversationId: conversationIdRef.current,
+            memory: conversationMemoryRef.current,
+            longTermMemory: {
+              userId: ACTIVE_USER_ID,
+              store: longTermMemoryStore,
+              consent: longTermMemoryConsentRef.current,
+            },
+            dailyBudgetRemaining: dailySpendRef.current,
+            dailyBudgetCap: null,
+          })
+
+          if (enrichment.hints) {
+            client.updateSessionInstructions(enrichment.hints)
+          }
+
+          if (enrichment.tier === 'vl-verify') {
+            cloudGateway.recordVlVerifyUsage({
+              conversationId: conversationIdRef.current,
+              estimatedTokens: 512,
+            })
+            setConversationTelemetry(telemetryStore.list())
+            setDailySpend(operationsAdmin.getDailySpend('ops-admin-token'))
+          }
+
+          if (enrichment.visualAnswer) {
+            const visualAnswer = enrichment.visualAnswer
+            setLastVisualAnswer(visualAnswer)
+            setActiveVisualEvidence(createActiveVisualEvidence(visualAnswer, Date.now()))
+            setConversationMemory((memory) => updateConversationMemory(memory, visualAnswer))
+
+            if (
+              visualAnswersMateriallyDiffer(visualAnswer, assistantTranscriptRef.current) &&
+              shouldSpeakVisualCorrection(featureFlags.omniVlCorrectionMode)
+            ) {
+              client.updateSessionInstructions(buildVisualCorrectionInstruction(visualAnswer, language))
+            } else if (visualAnswersMateriallyDiffer(visualAnswer, assistantTranscriptRef.current)) {
+              setFeedback(visualAnswer.answer)
+              setDialogueSegments(buildStreamingPreviewSegments(`verify-${Date.now()}`, visualAnswer.answer, true))
+            }
+          }
+        })()
+      },
+      onAssistantTranscriptDelta: (text) => {
+        assistantTranscriptRef.current = text
+        setFeedback(text)
+      },
+      onAssistantTranscriptDone: (text) => {
+        assistantTranscriptRef.current = text
+        setFeedback(text)
+        setDialogueSegments(buildStreamingPreviewSegments(`omni-${Date.now()}`, text, true))
+      },
+      onBargeIn: () => {
+        fullDuplexController.startListening()
+      },
+      onReady: () => {
+        omniSessionStartedAtRef.current = Date.now()
+        omniFailureCountRef.current = 0
+      },
+      onResponseDone: (usage) => {
+        if (usage?.totalTokens) {
+          cloudGateway.recordOmniSessionUsage({
+            conversationId: conversationIdRef.current,
+            durationMs: 0,
+            estimatedTokens: usage.totalTokens,
+          })
+          setConversationTelemetry(telemetryStore.list())
+          setDailySpend(operationsAdmin.getDailySpend('ops-admin-token'))
+        }
+      },
+      onError: (code, message, recoverable) => {
+        setFeedback(message)
+        applyOmniFailure(code, message, recoverable)
+      },
+      forceWss: import.meta.env.PROD,
+    })
+
+    omniClientRef.current = client
+    client.connect()
+
+    return () => {
+      if (omniSessionStartedAtRef.current) {
+        cloudGateway.recordOmniSessionUsage({
+          conversationId: conversationIdRef.current,
+          durationMs: Date.now() - omniSessionStartedAtRef.current,
+        })
+        setConversationTelemetry(telemetryStore.list())
+        setDailySpend(operationsAdmin.getDailySpend('ops-admin-token'))
+        omniSessionStartedAtRef.current = null
+      }
+
+      void omniPcmCaptureRef.current?.stop()
+      omniPcmCaptureRef.current = null
+      client.disconnect()
+      omniClientRef.current = null
+    }
+  }, [
+    applyOmniFailure,
+    backendConfig,
+    cloudGateway,
+    continuousVisionAnalyzer,
+    featureFlags.hybridOmniDialogue,
+    featureFlags.omniPureDialogue,
+    featureFlags.omniVlCorrectionMode,
+    fullDuplexController,
+    hybridOrchestrator,
+    hybridVoicePath,
+    language,
+    longTermMemoryStore,
+    operationsAdmin,
+    telemetryStore,
+  ])
+
+  useEffect(() => {
+    if (!shouldStartOmniSession(featureFlags.hybridOmniDialogue, hybridVoicePath) || !lastFrame) {
+      return
+    }
+
+    lastVisionDeltaRef.current = continuousVisionAnalyzer.getWorldModel().ingestFrame(lastFrame)
+  }, [continuousVisionAnalyzer, featureFlags.hybridOmniDialogue, hybridVoicePath, lastFrame])
+
+  useEffect(() => {
+    if (
+      !shouldStartOmniSession(featureFlags.hybridOmniDialogue, hybridVoicePath) ||
+      omniSessionStatus !== 'connected' ||
+      !mediaPrivacyConsent.cloudMediaTransmission
+    ) {
+      return
+    }
+
+    const intervalMs = framePolicyToOmniKeyFrameIntervalMs(
+      featureFlags.omniPureDialogue ? 'active' : 'normal',
+    )
+    const intervalId = window.setInterval(() => {
+      const frame = lastFrameRef.current
+      const client = omniClientRef.current
+      if (!frame?.blob || !client) {
+        return
+      }
+
+      void frameBlobToBase64(frame.blob)
+        .then((base64) => {
+          if (base64) {
+            client.appendImageBase64(base64)
+          }
+        })
+        .catch(() => undefined)
+    }, intervalMs)
+
+    return () => window.clearInterval(intervalId)
+  }, [
+    featureFlags.hybridOmniDialogue,
+    featureFlags.omniPureDialogue,
+    hybridVoicePath,
+    mediaPrivacyConsent.cloudMediaTransmission,
+    omniSessionStatus,
+  ])
+
+  useEffect(() => {
+    if (!shouldStartOmniSession(featureFlags.hybridOmniDialogue, hybridVoicePath) || omniSessionStatus !== 'connected') {
+      return
+    }
+
+    const stream = mediaStateRef.current.microphoneStream
+    const client = omniClientRef.current
+    if (!stream || !client || mediaPrivacyConsentRef.current.microphoneCapture !== true) {
+      return
+    }
+
+    let disposed = false
+
+    void startPcm16Capture(stream, (frame) => {
+      if (!disposed) {
+        client.appendAudioPcm16(frame)
+      }
+    }).then((session) => {
+      if (disposed) {
+        void session.stop()
+        return
+      }
+
+      omniPcmCaptureRef.current = session
+    })
+
+    return () => {
+      disposed = true
+      void omniPcmCaptureRef.current?.stop()
+      omniPcmCaptureRef.current = null
+    }
+  }, [featureFlags.hybridOmniDialogue, hybridVoicePath, omniSessionStatus, mediaState.microphoneStream, mediaState.microphoneStatus])
+
+  useEffect(() => {
+    if (
+      !lastFrame ||
+      !sessionClientRef.current ||
+      !shouldStartLegacySession(featureFlags.hybridOmniDialogue, featureFlags.realtimeSessionMode, hybridVoicePath)
+    ) {
+      return
+    }
+
+    const worldModel = continuousVisionAnalyzer.getWorldModel()
+    const delta = worldModel.ingestFrame(lastFrame)
+    sessionClientRef.current.sendVisionDelta(delta)
+  }, [
+    continuousVisionAnalyzer,
+    featureFlags.hybridOmniDialogue,
+    featureFlags.realtimeSessionMode,
+    hybridVoicePath,
+    lastFrame,
+  ])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setTick(Date.now()), 1000)
@@ -440,6 +949,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       new VideoFrameSampler({
         video: videoRef.current,
         onFrame: (frame) => {
+          lastFrameRef.current = frame
           setLastFrame((previous) => {
             releaseSampledVideoFrame(previous)
             return frame
@@ -647,6 +1157,21 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       return next
     })
   }, [])
+
+  const setHybridOmniDialogueEnabled = useCallback((enabled: boolean) => {
+    saveHybridDialoguePreference(enabled)
+    setHybridOmniDialogueUserEnabled(enabled)
+  }, [])
+
+  const setOmniPureDialogueEnabled = useCallback((enabled: boolean) => {
+    saveOmniPureDialoguePreference(enabled)
+    setOmniPureDialogueUserEnabled(enabled)
+    if (enabled && hybridOmniDialogueUserEnabled) {
+      setHybridVoicePath('omni')
+      setOmniFallbackReason(null)
+      omniFailureCountRef.current = 0
+    }
+  }, [hybridOmniDialogueUserEnabled])
 
   const exportLongTermMemoriesToFile = useCallback(async () => {
     const payload = await exportLongTermMemories(longTermMemoryStore, ACTIVE_USER_ID)
@@ -1000,9 +1525,10 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       }
 
       if (parseTeachingName(transcript)) {
+        const turnFrame = await resolveTurnFrame(videoRef.current, mediaState.cameraStatus, samplingMode)
         const teaching = await teachCustomObject({
           transcript,
-          frame: lastFrame ?? createFallbackFrame(mediaState.cameraStatus, samplingMode, videoRef.current),
+          frame: turnFrame,
           region: selectedObjectRegion,
           store: customObjectStore,
           extractor: customObjectFeatureExtractor,
@@ -1045,9 +1571,11 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
         return
       }
 
+      const turnFrame = await resolveTurnFrame(videoRef.current, mediaState.cameraStatus, samplingMode)
+
       if (
         !canRouteComplexRequest(networkState) &&
-        !lastFrame &&
+        !turnFrame &&
         isVisualQuestion(normalizePhrase(transcript))
       ) {
         const message =
@@ -1063,7 +1591,7 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       }
 
       const analyzingText =
-        lastFrame || mediaState.cameraStatus === 'ready'
+        turnFrame || mediaState.cameraStatus === 'ready'
           ? language === 'zh'
             ? '正在分析语音和画面...'
             : 'Analyzing voice and video...'
@@ -1073,9 +1601,11 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       setFeedback(analyzingText)
       setDialogueSegments(buildStreamingPreviewSegments(turnId, analyzingText, false))
 
+      turnFrameRef.current = turnFrame
+
       const result = await dialogueService.handleTurn({
         transcript,
-        frame: lastFrame,
+        frame: turnFrame,
         selectedObjectRegion,
         networkState,
         language,
@@ -1121,7 +1651,6 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       dialogueService,
       executeLocalCommand,
       language,
-      lastFrame,
       longTermMemoryConsent,
       longTermMemoryStore,
       markCloudRequestFailed,
@@ -1137,6 +1666,10 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
       speakFeedback,
     ],
   )
+
+  useEffect(() => {
+    handleTranscriptRef.current = handleTranscript
+  }, [handleTranscript])
 
   const stopPushToTalk = useCallback(async () => {
     setIsPushToTalkActive(false)
@@ -1218,31 +1751,22 @@ export function useRealtimeVisionVoice({ wakeDetector }: UseRealtimeVisionVoiceO
     setCameraCaptureConsent,
     setMicrophoneCaptureConsent,
     setCloudMediaTransmissionConsent,
+    setHybridOmniDialogueEnabled,
+    setOmniPureDialogueEnabled,
     setDailyBudgetCap,
     listConversationTelemetry: () => operationsAdmin.listConversations('ops-admin-token'),
     getDailySpend: () => dailySpend,
     markCloudRequestFailed,
+    sessionStatus,
+    omniSessionStatus,
+    hybridVoicePath,
+    omniFallbackReason,
+    routeTier,
+    fullDuplexState: fullDuplexController.getState(),
+    featureFlags,
   }
 }
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value))
-}
-
-function createFallbackFrame(
-  cameraStatus: MediaCaptureState['cameraStatus'],
-  samplingMode: SamplingMode,
-  video: HTMLVideoElement | null,
-): SampledVideoFrame | null {
-  if (cameraStatus !== 'ready') {
-    return null
-  }
-
-  return {
-    blob: new Blob(['local-frame'], { type: 'image/jpeg' }),
-    capturedAt: Date.now(),
-    width: video?.videoWidth || 640,
-    height: video?.videoHeight || 480,
-    mode: samplingMode === 'paused' ? 'normal' : samplingMode,
-  }
 }

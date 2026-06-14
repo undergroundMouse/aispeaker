@@ -31,19 +31,34 @@ The client SHALL start ASR capture when the user begins push-to-talk and SHALL s
 - **THEN** the client may commit the latest interim transcript if it is non-empty and meets the configured confidence threshold
 
 ### Requirement: Half-duplex speech IO
-The system SHALL operate ASR and TTS in half-duplex mode and SHALL NOT run ASR listening concurrently with active TTS playback unless the user explicitly starts push-to-talk.
+The system SHALL operate ASR and TTS in half-duplex mode when using push-to-talk fallback. In realtime session mode with full duplex enabled, the system SHALL run ASR and TTS concurrently with barge-in support.
 
 #### Scenario: Push-to-talk interrupts TTS
-- **WHEN** the user starts push-to-talk while TTS is speaking
+- **WHEN** the user starts push-to-talk while TTS is speaking in fallback mode
 - **THEN** the system cancels the active TTS playback, starts ASR capture, and shows interim transcript text in the Assist dialogue panel
 
-#### Scenario: TTS does not start during active ASR
-- **WHEN** the user is holding push-to-talk and ASR capture is active
+#### Scenario: TTS does not start during active ASR in fallback mode
+- **WHEN** the user is holding push-to-talk and ASR capture is active in fallback mode
 - **THEN** the system does not start TTS for a new assistant response until ASR commits the final transcript for that turn
 
-#### Scenario: No ambient ASR during playback
-- **WHEN** TTS is speaking and the user is not holding push-to-talk
+#### Scenario: Full duplex in session mode
+- **WHEN** realtime session mode with full duplex is enabled and TTS is speaking
+- **THEN** ASR remains active and barge-in can interrupt TTS without requiring push-to-talk
+
+#### Scenario: No ambient ASR during playback in fallback mode
+- **WHEN** TTS is speaking in push-to-talk fallback mode and the user is not holding push-to-talk
 - **THEN** the system does not run ASR listening
+
+### Requirement: Continuous session ASR
+The client SHALL stream microphone audio over the realtime WebSocket session for continuous ASR when session mode is active.
+
+#### Scenario: Audio chunks streamed in session mode
+- **WHEN** realtime session mode is active and microphone capture is authorized
+- **THEN** the client streams `audio.chunk` messages with sequence numbers to the session gateway
+
+#### Scenario: Interim results in session mode
+- **WHEN** the session gateway emits `asr.interim` events
+- **THEN** the Assist dialogue panel updates the user transcript area with interim text
 
 ### Requirement: Assist-visible user transcript presentation
 The Assist surface SHALL present user speech recognition output in the right-side dialogue panel rather than only through development debug tools.
@@ -66,3 +81,21 @@ The client ASR pipeline SHALL support evaluation against the configured quiet-en
 #### Scenario: Quiet-environment fixture fails
 - **WHEN** the ASR pipeline evaluation falls below the configured accuracy target
 - **THEN** the quality gate is marked failed and reports which utterances did not meet the target
+
+### Requirement: Hybrid Omni ASR delegation
+When hybrid Omni dialogue mode is enabled, the system SHALL delegate speech recognition for the primary dialogue path to Qwen-Omni Realtime and SHALL expose interim and final user transcripts to the Assist dialogue panel.
+
+#### Scenario: Interim transcript from Omni session
+- **WHEN** hybrid Omni dialogue mode is active and the user is speaking
+- **THEN** the Assist dialogue panel updates the user transcript area with interim text derived from Omni input transcription events when available
+
+#### Scenario: Final transcript committed on Omni turn completion
+- **WHEN** Omni Realtime completes a user turn in hybrid mode
+- **THEN** the client commits the final user transcript to the dialogue panel and conversation memory
+
+### Requirement: Legacy ASR fallback preservation
+The system SHALL retain Web Speech, Paraformer, and push-to-talk ASR providers as fallback paths when hybrid Omni dialogue mode is disabled or unavailable.
+
+#### Scenario: PTT fallback when Omni unavailable
+- **WHEN** hybrid Omni dialogue mode is enabled but the Omni session cannot be established
+- **THEN** the client falls back to push-to-talk or legacy session ASR without losing Assist speech input entirely

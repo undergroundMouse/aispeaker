@@ -159,7 +159,9 @@ describe('App', () => {
 
   it('shows retry feedback for complex requests during weak network', async () => {
     const localCommands = await import('./voice/localCommands')
+    const captureVideoFrame = await import('./media/captureVideoFrame')
     vi.spyOn(localCommands, 'canRouteComplexRequest').mockReturnValue(false)
+    vi.spyOn(captureVideoFrame, 'resolveTurnFrame').mockResolvedValue(null)
 
     render(<App />)
 

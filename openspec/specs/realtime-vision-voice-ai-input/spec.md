@@ -560,3 +560,47 @@ The system SHALL locally filter sensitive OCR content before proactive speech an
 #### Scenario: Sensitive prompt depends on OCR string
 - **WHEN** a proactive prompt would require speaking a sensitive OCR string to be useful
 - **THEN** the system suppresses that proactive prompt locally
+
+### Requirement: Session-based primary dialogue path
+The system SHALL use the realtime WebSocket session as the primary dialogue path when `VITE_REALTIME_SESSION_MODE` is enabled, integrating continuous vision and full-duplex voice.
+
+#### Scenario: Session mode handles dialogue turns
+- **WHEN** realtime session mode is enabled and the user speaks
+- **THEN** the system processes the turn through the session orchestrator with vision world model context rather than single-frame `handleTurn` only
+
+#### Scenario: Legacy fallback on session failure
+- **WHEN** realtime session connection fails or feature flag is disabled
+- **THEN** the system falls back to push-to-talk turn-based dialogue without blocking the user
+
+### Requirement: Level 3 vision context in dialogue
+The system SHALL supply multi-frame vision world model context including tracks, OCR, gestures, and scene deltas to dialogue processing in session mode.
+
+#### Scenario: Vision delta included in turn
+- **WHEN** a dialogue turn is processed in session mode
+- **THEN** the orchestrator receives structured vision.delta context rather than only the most recent single frame
+
+### Requirement: Hybrid Omni primary dialogue path
+When hybrid Omni dialogue mode is enabled, the Assist surface SHALL use the Qwen-Omni Realtime hybrid session as the primary dialogue path for microphone-driven conversation while preserving camera preview and visual evidence presentation.
+
+#### Scenario: Wake word starts hybrid Omni session listening
+- **WHEN** voice wake-up is enabled, hybrid Omni dialogue mode is active, and the wake trigger is detected
+- **THEN** the system activates the Omni Realtime session for continuous speech input without requiring push-to-talk
+
+#### Scenario: Assist dialogue panel shows Omni transcripts
+- **WHEN** hybrid Omni dialogue mode is active and the user or assistant speaks
+- **THEN** the Assist dialogue panel shows user and assistant transcript text derived from the Omni session alongside any structured visual evidence from the orchestrator
+
+#### Scenario: Visual accuracy gates remain enforced in hybrid mode
+- **WHEN** hybrid Omni dialogue mode is active and visual evaluation fixtures are executed
+- **THEN** common-object accuracy, OCR recall, temporal visual question accuracy, and uncertainty-answer constraints remain satisfied through the hybrid visual orchestrator and verification backend
+
+### Requirement: Hybrid mode feature flag
+The system SHALL gate hybrid Omni dialogue behind `VITE_HYBRID_OMNI_DIALOGUE` defaulting to disabled and SHALL preserve the existing push-to-talk and legacy session paths when the flag is disabled.
+
+#### Scenario: Flag disabled preserves legacy behavior
+- **WHEN** `VITE_HYBRID_OMNI_DIALOGUE` is not enabled
+- **THEN** the Assist surface continues to use the existing turn-based or legacy session dialogue path as configured
+
+#### Scenario: Flag enabled selects hybrid path
+- **WHEN** `VITE_HYBRID_OMNI_DIALOGUE` is enabled and backend Omni configuration is valid
+- **THEN** the Assist surface initializes the Omni Realtime hybrid session as the primary dialogue transport

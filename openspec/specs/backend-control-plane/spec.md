@@ -73,3 +73,43 @@ The system SHALL support a shadow-mode migration before making the backend the s
 #### Scenario: Authority flip moves enforcement to server
 - **WHEN** migration authority flip is enabled
 - **THEN** the client relies on backend responses for budget blocking and authoritative telemetry updates
+
+### Requirement: Realtime session WebSocket gateway
+The backend SHALL expose a WebSocket gateway at `/api/v1/realtime/session` for continuous realtime dialogue sessions.
+
+#### Scenario: Session WebSocket authenticated
+- **WHEN** a client connects to `/api/v1/realtime/session` with a valid device token
+- **THEN** the backend accepts the WebSocket upgrade and initializes session state
+
+#### Scenario: Session admin visibility
+- **WHEN** an authorized operator requests session health from the operations admin API
+- **THEN** the backend returns active session count and circuit breaker state
+
+### Requirement: Omni Realtime proxy gateway
+The backend control plane SHALL expose an authenticated WebSocket upgrade route at `/api/v1/realtime/omni` that proxies Qwen-Omni Realtime sessions for authorized clients.
+
+#### Scenario: Device route is separated from admin routes
+- **WHEN** the backend receives a request to `/api/v1/realtime/omni`
+- **THEN** it applies device credential authorization and does not expose operations admin credentials on the same route namespace
+
+#### Scenario: Omni upstream credentials are server-only
+- **WHEN** the Omni proxy opens an upstream DashScope connection
+- **THEN** it reads Omni credentials and model configuration from server environment variables only
+
+### Requirement: Omni session configuration surface
+The backend SHALL support server environment configuration for Omni Realtime model id, base WebSocket URL, default voice, and turn-detection mode used by the proxy gateway.
+
+#### Scenario: Default Omni model is configurable
+- **WHEN** `QWEN_OMNI_REALTIME_MODEL` is not set
+- **THEN** the backend defaults to `qwen3.5-omni-plus-realtime`
+
+#### Scenario: Invalid Omni configuration fails safely
+- **WHEN** required Omni credentials are missing and a client requests an Omni session
+- **THEN** the backend returns a recoverable session error and does not attempt an upstream connection
+
+### Requirement: Omni session observability for operators
+The backend SHALL expose session health and failure metrics for Omni Realtime proxy connections to the operations admin API.
+
+#### Scenario: Operator can inspect Omni circuit state
+- **WHEN** an authorized operator requests backend health or session metrics
+- **THEN** the response includes Omni proxy circuit breaker state and recent failure counts

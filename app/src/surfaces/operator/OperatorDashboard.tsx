@@ -19,6 +19,13 @@ export interface OperatorDashboardProps {
   dailySpend: number
   cloudReductionPercent: number
   conversationTelemetry: ConversationTelemetryRecord[]
+  sessionStatus?: string
+  omniSessionStatus?: string
+  hybridVoicePath?: string
+  omniFallbackReason?: string | null
+  activeSessions?: number
+  omniSuccessRate?: number
+  circuitBreakers?: Record<string, { isOpen: boolean }>
   onBack: () => void
   onSetBudgetCap: (cap: number) => void
   onClearBudgetCap: () => void
@@ -30,6 +37,13 @@ export function OperatorDashboard({
   dailySpend,
   cloudReductionPercent,
   conversationTelemetry,
+  sessionStatus,
+  omniSessionStatus,
+  hybridVoicePath,
+  omniFallbackReason,
+  activeSessions,
+  omniSuccessRate,
+  circuitBreakers,
   onBack,
   onSetBudgetCap,
   onClearBudgetCap,
@@ -59,6 +73,24 @@ export function OperatorDashboard({
           <p>
             {text.dailySpend}: ${dailySpend.toFixed(4)} | {text.cloudReduction}: {cloudReductionPercent}%
           </p>
+          {sessionStatus ? (
+            <p>
+              Legacy session: {sessionStatus} | Active: {activeSessions ?? 0}
+            </p>
+          ) : null}
+          {omniSessionStatus ? (
+            <p>
+              Omni session: {omniSessionStatus} | Voice path: {hybridVoicePath ?? 'omni'}
+            </p>
+          ) : null}
+          {omniFallbackReason ? <p>Fallback: {omniFallbackReason}</p> : null}
+          {circuitBreakers ? (
+            <p>
+              Circuit: ASR {circuitBreakers.asr?.isOpen ? 'OPEN' : 'closed'} | Omni{' '}
+              {circuitBreakers['omni-realtime']?.isOpen ? 'OPEN' : 'closed'}
+              {typeof omniSuccessRate === 'number' ? ` | Omni success ${Math.round(omniSuccessRate * 100)}%` : ''}
+            </p>
+          ) : null}
           <div className="button-row">
             <button type="button" onClick={() => onSetBudgetCap(0.01)}>
               {text.setBudgetCap}
@@ -78,6 +110,10 @@ export function OperatorDashboard({
                   <span>
                     {record.conversationId}: {record.estimatedTokens} {text.estimatedTokens} /{' '}
                     {record.actualTokens ?? 0} {text.actualTokens}, ${record.estimatedCost.toFixed(4)}
+                    {record.omniSessionDurationMs
+                      ? ` | Omni ${Math.round(record.omniSessionDurationMs / 1000)}s`
+                      : ''}
+                    {record.vlVerifyRequestCount ? ` | VL verify ${record.vlVerifyRequestCount}` : ''}
                   </span>
                 </li>
               ))}
